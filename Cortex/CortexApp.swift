@@ -27,6 +27,9 @@ struct CortexApp: App {
                     if phase == .active {
                         app.refreshForNewDay()
                         Task { store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies()) }
+                    } else {
+                        // Persist this account's progress when leaving the foreground.
+                        Task { await app.pushProfileNow() }
                     }
                 }
                 // Mirror the real StoreKit subscription entitlement into AppState.
@@ -36,10 +39,12 @@ struct CortexApp: App {
                     // Register for remote push (used to broadcast emergencies) and
                     // pull any content published to all users.
                     UIApplication.shared.registerForRemoteNotifications()
+                    // Cold launch with a restored session → load the account's profile.
+                    if SupabaseService.shared.isSignedIn { await app.bindAccount() }
                     await SupabaseService.shared.syncContent(into: store)
                     store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies())
                     await SupabaseService.shared.submitScore(
-                        playerId: app.playerId, username: app.displayName, xp: app.lifetimeXP)
+                        playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP)
                 }
         }
     }
@@ -47,13 +52,37 @@ struct CortexApp: App {
 
 struct RootView: View {
     @EnvironmentObject var app: AppState
+    @EnvironmentObject var sb: SupabaseService
     var body: some View {
-        if let key = ProcessInfo.processInfo.environment["CX_SCREEN"], !key.isEmpty {
-            DebugRouter(key: key)                 // verification-only, off in production
-        } else if app.onboarded {
-            MainTabView().transition(.opacity)
-        } else {
-            OnboardingFlow().transition(.opacity)
+        Group {
+            if let key = ProcessInfo.processInfo.environment["CX_SCREEN"], !key.isEmpty {
+                DebugRouter(key: key)                 // verification-only, off in production
+            } else if !sb.isSignedIn {
+                OnboardingFlow(startAt: .intro)       // account-first: sign-in required
+            } else if app.isSyncing {
+                SyncingScreen()                       // loading this account's cloud profile
+            } else if !app.onboarded {
+                OnboardingFlow(startAt: .country)     // new account finishes onboarding
+            } else {
+                MainTabView()
+            }
+        }
+        .transition(.opacity)
+        .animation(.easeInOut, value: sb.isSignedIn)
+        .animation(.easeInOut, value: app.isSyncing)
+        .animation(.easeInOut, value: app.onboarded)
+    }
+}
+
+/// Shown briefly right after sign-in while the account's progress loads.
+struct SyncingScreen: View {
+    var body: some View {
+        AppBackground {
+            VStack(spacing: 16) {
+                VixClip(anim: .wave, size: 150)
+                ProgressView().controlSize(.large).tint(CX.teal)
+                Text("Loading your progress…").font(CX.heading(17)).foregroundStyle(CX.navySoft)
+            }
         }
     }
 }

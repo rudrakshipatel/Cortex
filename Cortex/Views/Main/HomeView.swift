@@ -321,7 +321,7 @@ struct LeaguesView: View {
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
         .onAppear { app.refreshForNewDay(); ensureRandom() }
         .task { await SupabaseService.shared.submitScore(
-            playerId: app.playerId, username: app.displayName, xp: app.lifetimeXP) }
+            playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP) }
     }
 
     // MARK: Not-qualified (themed tier intro)
@@ -654,7 +654,10 @@ struct MeView: View {
             Text("Shown on your profile and the global leaderboard.")
         }
         .confirmationDialog("Log out of Cortex?", isPresented: $confirmLogout, titleVisibility: .visible) {
-            Button("Log Out", role: .destructive) { app.onboarded = false }
+            Button("Log Out", role: .destructive) {
+                // Save this account's progress, then sign out (returns to sign-in).
+                Task { await app.unbindAccount(); SupabaseService.shared.signOutPlayer() }
+            }
             Button("Cancel", role: .cancel) {}
         }
     }
@@ -731,7 +734,7 @@ struct MeView: View {
         app.displayName = String(name.prefix(40))
         // Push the new name to the leaderboard right away.
         Task { await SupabaseService.shared.submitScore(
-            playerId: app.playerId, username: app.displayName, xp: app.lifetimeXP) }
+            playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP) }
     }
 
     private func leagueCard() -> some View {

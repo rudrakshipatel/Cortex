@@ -41,6 +41,9 @@ final class SupabaseService: ObservableObject {
 
     // MARK: Player account (Sign in with Google / Apple)
     @Published private(set) var userEmail: String? = UserDefaults.standard.string(forKey: "cx.sbUserEmail")
+    /// The signed-in player's auth user id — the key for their cloud profile and
+    /// their leaderboard identity. Not a secret, so it stays in UserDefaults.
+    @Published private(set) var userId: String? = UserDefaults.standard.string(forKey: "cx.sbUserId")
     private var userToken: String? { didSet { Keychain.set(userToken, for: K.userToken) } }
 
     var isConfigured: Bool { SupabaseConfig.isConfigured }
@@ -67,28 +70,68 @@ final class SupabaseService: ObservableObject {
         }
         userToken = access
         Keychain.set(params["refresh_token"], for: K.userRefresh)
-        let email = try? await fetchUserEmail(access)
-        userEmail = email
-        UserDefaults.standard.set(email, forKey: "cx.sbUserEmail")
-        return email
+        let user = try? await fetchUser(access)
+        userEmail = user?.email
+        userId = user?.id
+        UserDefaults.standard.set(user?.email, forKey: "cx.sbUserEmail")
+        UserDefaults.standard.set(user?.id, forKey: "cx.sbUserId")
+        return user?.email
     }
 
     func signOutPlayer() {
         userToken = nil
         userEmail = nil
+        userId = nil
         Keychain.delete(K.userRefresh)
         UserDefaults.standard.removeObject(forKey: "cx.sbUserEmail")
+        UserDefaults.standard.removeObject(forKey: "cx.sbUserId")
     }
 
-    /// GET /auth/v1/user to read the signed-in account's email.
-    private func fetchUserEmail(_ accessToken: String) async throws -> String? {
+    /// GET /auth/v1/user to read the signed-in account's id + email.
+    private func fetchUser(_ accessToken: String) async throws -> (id: String, email: String?)? {
         guard let url = URL(string: "\(SupabaseConfig.url)/auth/v1/user") else { return nil }
         var req = URLRequest(url: url)
         req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await URLSession.shared.data(for: req)
-        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return obj?["email"] as? String
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = obj["id"] as? String else { return nil }
+        return (id, obj["email"] as? String)
+    }
+
+    /// Resolve the current user id, fetching it from the server if we only have
+    /// a token (e.g. after a cold launch with a restored session).
+    func currentUserId() async -> String? {
+        if let id = userId { return id }
+        guard let token = userToken, let user = try? await fetchUser(token) else { return nil }
+        userId = user.id
+        userEmail = user.email
+        UserDefaults.standard.set(user.id, forKey: "cx.sbUserId")
+        return user.id
+    }
+
+    // MARK: - Cloud profile (per-account game state)
+
+    /// Load this account's saved game state, or nil if there's no profile yet.
+    func loadProfile() async -> Data? {
+        guard isConfigured, let uid = await currentUserId(),
+              let (data, _) = try? await send(method: "GET",
+                  path: "rest/v1/profiles?user_id=eq.\(uid)&select=state", player: true),
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let state = rows.first?["state"]
+        else { return nil }
+        return try? JSONSerialization.data(withJSONObject: state)
+    }
+
+    /// Upsert this account's game state (the `stateJSON` is the encoded profile).
+    func saveProfile(_ stateJSON: Data) async {
+        guard isConfigured, let uid = await currentUserId(),
+              let state = try? JSONSerialization.jsonObject(with: stateJSON) else { return }
+        let iso = ISO8601DateFormatter().string(from: Date())
+        let row: [[String: Any]] = [["user_id": uid, "state": state, "updated_at": iso]]
+        guard let body = try? JSONSerialization.data(withJSONObject: row) else { return }
+        _ = try? await send(method: "POST", path: "rest/v1/profiles", body: body, player: true,
+                            extraHeaders: ["Prefer": "resolution=merge-duplicates,return=minimal"])
     }
 
     private static func parseFragment(_ fragment: String) -> [String: String] {

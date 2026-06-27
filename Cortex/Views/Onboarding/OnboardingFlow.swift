@@ -126,8 +126,6 @@ private struct AuthScreen: View {
                     Text(error).font(CX.label(13)).foregroundStyle(CX.orange)
                         .multilineTextAlignment(.center)
                 }
-                Button("Skip for now") { onDone() }
-                    .font(CX.label(14)).foregroundStyle(CX.navySoft)
 
                 Text("By continuing, you agree to our terms & privacy policy")
                     .font(CX.label(12)).foregroundStyle(CX.navySoft)
@@ -159,9 +157,13 @@ private struct AuthScreen: View {
         Task {
             do {
                 let email = try await sb.signInWithOAuth(provider: provider)
-                if let email, !email.isEmpty { app.displayName = email.components(separatedBy: "@").first.map { "Dr. " + $0.capitalized } ?? app.displayName }
+                // Load this account's cloud profile (creates a fresh one for a new
+                // account). RootView then routes to onboarding or the main app.
+                await app.bindAccount()
+                if let email, !email.isEmpty, app.displayName == "Dr. Vix Trainee" {
+                    app.displayName = email.components(separatedBy: "@").first.map { "Dr. " + $0.capitalized } ?? app.displayName
+                }
                 working = nil
-                onDone()
             } catch {
                 working = nil
                 self.error = (error as? LocalizedError)?.errorDescription ?? "Sign-in failed. Please try again."

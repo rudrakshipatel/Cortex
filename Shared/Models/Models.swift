@@ -1,8 +1,18 @@
 import SwiftUI
+import Combine
 
 // MARK: - App-wide state
 @MainActor
 final class AppState: ObservableObject {
+    /// True while loading this account's cloud profile right after sign-in.
+    @Published private(set) var isSyncing = false
+    /// True once the signed-in account's profile has been bound this session.
+    private var accountBound = false
+    private var bag = Set<AnyCancellable>()
+
+    /// Identity for the global leaderboard — the signed-in account when
+    /// available, else the device's anonymous id.
+    var leaderboardId: String { SupabaseService.shared.userId ?? playerId }
     /// Whether the user has finished onboarding. Published (not @AppStorage) so
     /// that flipping it actually re-renders RootView and shows the main app.
     @Published var onboarded: Bool { didSet { defaults.set(onboarded, forKey: "onboarded") } }
@@ -127,6 +137,104 @@ final class AppState: ObservableObject {
         topThreeFinishes = d.object(forKey: K.topThree) as? Int ?? 0
         country = d.string(forKey: K.country) ?? ""
         refreshForNewDay()
+
+        // Autosave: 2s after the last change, push the profile to the cloud (only
+        // once an account is bound). Captures every mutation without instrumenting
+        // each call site.
+        objectWillChange
+            .debounce(for: .seconds(2), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.autosaveProfile() }
+            .store(in: &bag)
+    }
+
+    // MARK: - Cloud profile (per-account, syncs on sign-in)
+
+    /// The slice of state that belongs to the account (everything except the
+    /// device-local `playerId`). Stored as the `state` JSON in `profiles`.
+    struct ProfileState: Codable {
+        var onboarded = false
+        var lifetimeXP = 0, coins = 500, life = AppState.maxLife
+        var displayName = "Dr. Vix Trainee", country = ""
+        var streak = 0, lastActiveEpochDay = 0, highestStreak = 0, streakFreezes = 0
+        var activeDays: [Int] = [], lastLifeDay = 0, lastEnergyTS = 0.0
+        var solvedDailyDays: [Int] = [], solvedCaseIDs: [String] = []
+        var caseTrophies: [String: Int] = [:]
+        var casesSolved = 0, casesFinished = 0, weeklyXP = 0, leagueCasesThisWeek = 0
+        var lastLeagueWeek = 0, gold = 0, silver = 0, bronze = 0, topThreeFinishes = 0
+    }
+
+    func exportProfile() -> ProfileState {
+        ProfileState(
+            onboarded: onboarded, lifetimeXP: lifetimeXP, coins: coins, life: life,
+            displayName: displayName, country: country, streak: streak,
+            lastActiveEpochDay: lastActiveEpochDay, highestStreak: highestStreak,
+            streakFreezes: streakFreezes, activeDays: Array(activeDays), lastLifeDay: lastLifeDay,
+            lastEnergyTS: lastEnergyDate.timeIntervalSince1970,
+            solvedDailyDays: Array(solvedDailyDays), solvedCaseIDs: Array(solvedCaseIDs),
+            caseTrophies: caseTrophies, casesSolved: casesSolved, casesFinished: casesFinished,
+            weeklyXP: weeklyXP, leagueCasesThisWeek: leagueCasesThisWeek, lastLeagueWeek: lastLeagueWeek,
+            gold: gold, silver: silver, bronze: bronze, topThreeFinishes: topThreeFinishes)
+    }
+
+    func applyProfile(_ p: ProfileState) {
+        onboarded = p.onboarded
+        lifetimeXP = p.lifetimeXP; coins = p.coins; life = p.life
+        displayName = p.displayName; country = p.country
+        streak = p.streak; lastActiveEpochDay = p.lastActiveEpochDay
+        highestStreak = p.highestStreak; streakFreezes = p.streakFreezes
+        activeDays = Set(p.activeDays); lastLifeDay = p.lastLifeDay
+        lastEnergyDate = p.lastEnergyTS > 0 ? Date(timeIntervalSince1970: p.lastEnergyTS) : Date()
+        solvedDailyDays = Set(p.solvedDailyDays); solvedCaseIDs = Set(p.solvedCaseIDs)
+        caseTrophies = p.caseTrophies
+        casesSolved = p.casesSolved; casesFinished = p.casesFinished
+        weeklyXP = p.weeklyXP; leagueCasesThisWeek = p.leagueCasesThisWeek
+        lastLeagueWeek = p.lastLeagueWeek
+        gold = p.gold; silver = p.silver; bronze = p.bronze; topThreeFinishes = p.topThreeFinishes
+        refreshForNewDay()
+    }
+
+    /// Reset all account progress to a fresh start (used when a new account signs
+    /// in on a device that previously held a different one).
+    func resetProgress() {
+        applyProfile(ProfileState())
+        onboarded = false
+    }
+
+    /// Bind the signed-in account: load its cloud profile, or create a fresh one.
+    /// The very first account to sign in on a device claims the existing local
+    /// progress; later/other accounts start clean.
+    func bindAccount() async {
+        guard SupabaseService.shared.isSignedIn else { return }
+        isSyncing = true
+        defer { isSyncing = false; accountBound = true }
+        if let data = await SupabaseService.shared.loadProfile(),
+           let p = try? JSONDecoder().decode(ProfileState.self, from: data) {
+            applyProfile(p)                              // existing account → its own state
+        } else {
+            if defaults.bool(forKey: "cx.hasBoundAccount") {
+                resetProgress()                          // different/new account → fresh
+            }                                            // else: claim the device's current progress
+            await pushProfileNow()                       // create the row
+        }
+        defaults.set(true, forKey: "cx.hasBoundAccount")
+    }
+
+    /// Save the latest state, then forget the account (used on sign-out).
+    func unbindAccount() async {
+        await pushProfileNow()
+        accountBound = false
+        resetProgress()
+    }
+
+    private func autosaveProfile() {
+        guard accountBound, SupabaseService.shared.isSignedIn else { return }
+        Task { await pushProfileNow() }
+    }
+
+    func pushProfileNow() async {
+        guard SupabaseService.shared.isSignedIn,
+              let data = try? JSONEncoder().encode(exportProfile()) else { return }
+        await SupabaseService.shared.saveProfile(data)
     }
 
     /// Whole days since the Unix epoch in **GMT** (all daily resets are at GMT 00:00).

@@ -52,6 +52,10 @@ Reviewed against the OWASP Mobile/API risks. Findings and the mitigations in pla
   the player to sign in at the outcome screen if they aren't already. See
   `supabase/server_grading.sql`. (Built-in sample cases ship with the app and are
   graded locally; only admin-uploaded content is server-protected.)
+- **Per-account data isolation:** Each player's game state lives in `profiles`
+  with RLS `using (user_id = auth.uid())`, so a signed-in account can read/write
+  **only its own** row. Accounts are fully isolated and progress is bound to the
+  account, not the device. See `supabase/profiles.sql`.
 - **Leaderboard integrity:** `submit_score` clamps XP to `[0, 100_000_000]` and
   only ever moves a stored score **up**, so a known UUID can't be griefed down.
   Note: it's an anonymous, client-reported leaderboard — for true anti-cheat,
