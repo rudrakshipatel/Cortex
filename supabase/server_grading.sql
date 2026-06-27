@@ -64,12 +64,31 @@ returns jsonb language sql stable security definer set search_path = public as $
 $$;
 grant execute on function public.get_emergency(uuid) to anon, authenticated;
 
--- 3) Grade an attempt on the server. The client sends the ARRAY INDICES of the
---    options it picked; the server reads the true answers from storage, scores
---    the attempt (same formula as the app), and returns the score plus the full
---    case so the outcome screen can reveal the answer AFTER the attempt.
---      diagnosis 60% · helpful tests 20% · appropriate treatments 20%,
---      with a 0.25 penalty per wasteful test/treatment.
+-- 3) Per-user attempt log. Ties each graded attempt to an authenticated player
+--    so grading can be rate-limited and abuse detected. RPC-only (no client RLS).
+create table if not exists public.case_attempts (
+  user_id  uuid not null,
+  source   text not null,
+  case_id  uuid not null,
+  attempts int  not null default 1,
+  first_at timestamptz not null default now(),
+  last_at  timestamptz not null default now(),
+  primary key (user_id, source, case_id)
+);
+alter table public.case_attempts enable row level security;
+create index if not exists case_attempts_user_time_idx
+  on public.case_attempts (user_id, last_at desc);
+
+-- 3b) Grade an attempt on the server. The client sends the ARRAY INDICES of the
+--     options it picked; the server reads the true answers from storage, scores
+--     the attempt (same formula as the app), and returns the score plus the full
+--     case so the outcome screen can reveal the answer AFTER the attempt.
+--       diagnosis 60% · helpful tests 20% · appropriate treatments 20%,
+--       with a 0.25 penalty per wasteful test/treatment.
+--
+--     Grading REQUIRES an authenticated player (so anonymous scripts can't
+--     scrape answers one case at a time) and is rate-limited per user, which
+--     closes the "grade every case once to harvest the bank" hole.
 create or replace function public.grade_case(
   p_source   text,
   p_id       uuid,
@@ -77,8 +96,10 @@ create or replace function public.grade_case(
   p_dx_idx   int   default null,
   p_tx_idx   int[] default '{}'
 ) returns jsonb
-language plpgsql stable security definer set search_path = public as $$
+language plpgsql volatile security definer set search_path = public as $$
 declare
+  v_uid       uuid := auth.uid();
+  v_recent    int;
   pay         jsonb;
   diagnoses   jsonb;
   tests       jsonb;
@@ -91,6 +112,17 @@ declare
   score       numeric := 0;
   xp_reward   int;
 begin
+  -- Must be a signed-in player.
+  if v_uid is null then
+    return jsonb_build_object('error', 'auth required');
+  end if;
+  -- Rate limit: at most 120 graded cases per user per rolling hour.
+  select count(*) into v_recent from public.case_attempts
+    where user_id = v_uid and last_at > now() - interval '1 hour';
+  if v_recent >= 120 then
+    return jsonb_build_object('error', 'rate limited');
+  end if;
+
   if p_source = 'emergency' then
     select payload into pay from public.emergencies where id = p_id;
   else
@@ -142,6 +174,12 @@ begin
 
   score := least(1.0, (case when dx_ok then 0.60 else 0 end) + tests_score + tx_score);
 
+  -- Record the attempt (drives the rate limit + abuse detection).
+  insert into public.case_attempts (user_id, source, case_id)
+  values (v_uid, p_source, p_id)
+  on conflict (user_id, source, case_id) do update
+    set attempts = public.case_attempts.attempts + 1, last_at = now();
+
   return jsonb_build_object(
     'score',        score,
     'earned_xp',    round(score * 100),
@@ -150,7 +188,9 @@ begin
   );
 end;
 $$;
-grant execute on function public.grade_case(text, uuid, int[], int, int[]) to anon, authenticated;
+-- Only signed-in players may grade (anon callers get "auth required").
+revoke execute on function public.grade_case(text, uuid, int[], int, int[]) from anon;
+grant  execute on function public.grade_case(text, uuid, int[], int, int[]) to authenticated;
 
 -- 4) Lock the tables: anon may no longer read raw rows (so the answer key can't
 --    be scraped). Access is only through the stripped feeds + grade_case above.

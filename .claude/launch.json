@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cortex-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5173", "--directory", "/Users/rudrakshipatel/Downloads/cortex-site"],
+      "port": 5173
+    }
+  ]
+}

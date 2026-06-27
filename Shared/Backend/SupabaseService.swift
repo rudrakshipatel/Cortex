@@ -223,7 +223,8 @@ final class SupabaseService: ObservableObject {
         ]
         if let dxIdx { args["p_dx_idx"] = dxIdx }
         guard let body = try? JSONSerialization.data(withJSONObject: args),
-              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/grade_case", body: body),
+              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/grade_case",
+                                              body: body, player: true),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let caseObj = obj["case"], !(caseObj is NSNull),
               let pdata = try? JSONSerialization.data(withJSONObject: caseObj),
@@ -350,7 +351,8 @@ final class SupabaseService: ObservableObject {
     // MARK: - HTTP core
     @discardableResult
     private func send(method: String, path: String, body: Data? = nil,
-                      admin: Bool = false, extraHeaders: [String: String] = [:],
+                      admin: Bool = false, player: Bool = false,
+                      extraHeaders: [String: String] = [:],
                       retrying: Bool = false) async throws -> (Data, HTTPURLResponse) {
         guard isConfigured, let url = URL(string: "\(SupabaseConfig.url)/\(path)") else { throw SBError.notConfigured }
         var req = URLRequest(url: url)
@@ -358,7 +360,11 @@ final class SupabaseService: ObservableObject {
         req.httpBody = body
         req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let bearer = admin ? (adminToken ?? SupabaseConfig.anonKey) : SupabaseConfig.anonKey
+        // Bearer: admin token for admin writes, the signed-in player's token when
+        // an authenticated action is needed (grading), else the public anon key.
+        let bearer = admin  ? (adminToken ?? SupabaseConfig.anonKey)
+                   : player ? (userToken ?? SupabaseConfig.anonKey)
+                   :          SupabaseConfig.anonKey
         req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         for (k, v) in extraHeaders { req.setValue(v, forHTTPHeaderField: k) }
 

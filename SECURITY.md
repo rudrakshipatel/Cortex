@@ -45,10 +45,13 @@ Reviewed against the OWASP Mobile/API risks. Findings and the mitigations in pla
   by anon; clients fetch questions through `get_cases` / `get_emergencies`, which
   return the payload with the answers **stripped out**, and attempts are scored by
   `grade_case` on the server. Only admins can write (alter) questions.
-  *Residual:* because players are anonymous and the outcome screen must reveal the
-  answer after a submitted attempt, a scripted client could still grade each case
-  once to learn its answer. Fully closing that needs authenticated users + per-user
-  attempt records / rate-limiting on `grade_case`. See `supabase/server_grading.sql`.
+  Grading **requires an authenticated player** (Google/Apple sign-in) — anonymous
+  callers get `auth required`, so answers can't be scraped without an identity —
+  and every attempt is logged to `case_attempts` and **rate-limited** to 120
+  graded cases per user per hour, which defeats bulk harvesting. The app prompts
+  the player to sign in at the outcome screen if they aren't already. See
+  `supabase/server_grading.sql`. (Built-in sample cases ship with the app and are
+  graded locally; only admin-uploaded content is server-protected.)
 - **Leaderboard integrity:** `submit_score` clamps XP to `[0, 100_000_000]` and
   only ever moves a stored score **up**, so a known UUID can't be griefed down.
   Note: it's an anonymous, client-reported leaderboard — for true anti-cheat,

@@ -62,6 +62,9 @@ struct CaseFlow: View {
             CaseRewardCover(coins: session.earnedCoins) { dismiss() }
         }
         .onChange(of: step) { _, _ in speech.stop() }   // stop narration when the step changes
+        // Apply rewards exactly once, the moment the result is known (local cases
+        // reveal immediately; server cases after grading / sign-in).
+        .onChange(of: session.revealed) { _, rev in if rev { award() } }
         .onDisappear { speech.stop() }
     }
 
@@ -156,13 +159,10 @@ struct CaseFlow: View {
     private func recordOutcome() {
         guard !recorded else { return }
         recorded = true
-        if session.hasLocalKey {
-            award()
-        } else if let ref = clinicalCase.remote {
-            Task { await session.gradeRemotely(ref); award() }
+        if session.hasLocalKey || clinicalCase.remote == nil {
+            session.markRevealed()           // local key (or nothing to grade) → award via onChange
         } else {
-            session.markRevealed()   // nothing to grade against; show the outcome
-            award()
+            Task { await session.gradeRemotely() }   // sets `revealed` on success → award via onChange
         }
     }
 
@@ -611,6 +611,7 @@ private struct OutcomeStep: View {
     @EnvironmentObject var app: AppState
     var onDone: () -> Void
     @State private var confirmMentor = false
+    @State private var signingIn = false
 
     private var correct: Bool { session.diagnosisCorrect }
 
@@ -640,6 +641,8 @@ private struct OutcomeStep: View {
         // anything (otherwise the answer/score would flash as a wrong "0").
         if session.revealed || session.hasLocalKey {
             content
+        } else if session.needsSignIn {
+            signInPrompt
         } else {
             VStack(spacing: 16) {
                 Spacer()
@@ -648,6 +651,46 @@ private struct OutcomeStep: View {
                 Spacer()
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// Shown when a server case is finished but no player is signed in — grading
+    /// happens securely on the server, so we need a session first.
+    private var signInPrompt: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            VixClip(anim: .wave, size: 140)
+            Text("Sign in to see your score")
+                .font(CX.title(22)).foregroundStyle(CX.navy).multilineTextAlignment(.center)
+            Text("Cases are graded securely on our server, so you'll need to be signed in to get your result.")
+                .font(CX.body(14)).foregroundStyle(CX.navySoft)
+                .multilineTextAlignment(.center).padding(.horizontal, 32)
+            if signingIn {
+                ProgressView().controlSize(.large).tint(CX.teal).padding(.top, 6)
+            } else {
+                VStack(spacing: 12) {
+                    signInButton("Sign in with Google", "g.circle.fill", "google")
+                    signInButton("Sign in with Apple", "applelogo", "apple")
+                }.padding(.horizontal, 32).padding(.top, 6)
+            }
+            Spacer()
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func signInButton(_ title: String, _ icon: String, _ provider: String) -> some View {
+        Button {
+            signingIn = true
+            Task {
+                _ = try? await SupabaseService.shared.signInWithOAuth(provider: provider)
+                await session.gradeRemotely()   // re-grade; reveals on success, re-prompts if cancelled
+                signingIn = false
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon); Text(title).font(CX.heading(16))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 14).foregroundStyle(.white)
+        }
+        .buttonStyle(PushButtonStyle(face: CX.navy, lip: Color.black.opacity(0.4)))
     }
 
     private var content: some View {

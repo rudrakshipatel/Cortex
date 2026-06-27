@@ -510,6 +510,9 @@ final class CaseSession: ObservableObject {
     /// Server cases are scored remotely; this flips true once the result is in
     /// (or grading failed). The outcome screen waits on it before revealing.
     @Published private(set) var revealed = false
+    /// Server grading requires a signed-in player; set when the outcome is
+    /// reached without a session, so the outcome screen can prompt sign-in.
+    @Published private(set) var needsSignIn = false
 
     /// True when the case carries its own answer key (built-in/seed cases).
     /// Server cases arrive stripped of answers and are graded remotely instead.
@@ -575,8 +578,13 @@ final class CaseSession: ObservableObject {
 
     /// Grade a server case: submit the picks, get back the score and the full
     /// (answer-bearing) case, then reveal it so the outcome screen renders as
-    /// usual. Marks `revealed` even on failure so the flow never hangs.
-    func gradeRemotely(_ ref: RemoteRef) async {
+    /// usual. Grading needs a signed-in player (the server enforces this); if
+    /// there's no session we ask the outcome screen to prompt sign-in instead of
+    /// revealing. Marks `revealed` on success/failure so the flow never hangs.
+    func gradeRemotely() async {
+        guard let ref = clinicalCase.remote else { revealed = true; return }
+        guard SupabaseService.shared.isSignedIn else { needsSignIn = true; return }
+        needsSignIn = false
         let picks = pickedIndices()
         if let result = await SupabaseService.shared.gradeCase(
             ref, testIdx: picks.tests, dxIdx: picks.dx, txIdx: picks.tx) {
