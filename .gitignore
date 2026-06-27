@@ -24,3 +24,8 @@ __pycache__/
 *secret*.txt
 .env
 .env.*
+
+# Local editor / tooling config
+.claude/
+.vscode/
+.idea/
