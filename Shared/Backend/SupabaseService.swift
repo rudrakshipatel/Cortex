@@ -7,18 +7,41 @@ import Foundation
 final class SupabaseService: ObservableObject {
     static let shared = SupabaseService()
     private init() {
-        adminToken = UserDefaults.standard.string(forKey: "cx.sbToken")
-        refreshToken = UserDefaults.standard.string(forKey: "cx.sbRefresh")
-        userToken = UserDefaults.standard.string(forKey: "cx.sbUserToken")
+        Self.migrateLegacyTokensIfNeeded()
+        adminToken = Keychain.get(K.adminToken)
+        refreshToken = Keychain.get(K.adminRefresh)
+        userToken = Keychain.get(K.userToken)
     }
 
+    /// Keychain account names for the bearer tokens (the only true secrets).
+    private enum K {
+        static let adminToken   = "cx.sbToken"
+        static let adminRefresh = "cx.sbRefresh"
+        static let userToken    = "cx.sbUserToken"
+        static let userRefresh  = "cx.sbUserRefresh"
+    }
+
+    /// One-time move of any tokens left in UserDefaults by older builds into the
+    /// Keychain, then scrub them from the plist.
+    private static func migrateLegacyTokensIfNeeded() {
+        let d = UserDefaults.standard
+        for key in [K.adminToken, K.adminRefresh, K.userToken, K.userRefresh] {
+            if Keychain.get(key) == nil, let legacy = d.string(forKey: key) {
+                Keychain.set(legacy, for: key)
+            }
+            d.removeObject(forKey: key)
+        }
+    }
+
+    // Tokens live in the Keychain (encrypted, excluded from backups); emails are
+    // not secrets and stay in UserDefaults.
     @Published private(set) var adminEmail: String? = UserDefaults.standard.string(forKey: "cx.sbEmail")
-    private var adminToken: String? { didSet { UserDefaults.standard.set(adminToken, forKey: "cx.sbToken") } }
-    private var refreshToken: String? { didSet { UserDefaults.standard.set(refreshToken, forKey: "cx.sbRefresh") } }
+    private var adminToken: String? { didSet { Keychain.set(adminToken, for: K.adminToken) } }
+    private var refreshToken: String? { didSet { Keychain.set(refreshToken, for: K.adminRefresh) } }
 
     // MARK: Player account (Sign in with Google / Apple)
     @Published private(set) var userEmail: String? = UserDefaults.standard.string(forKey: "cx.sbUserEmail")
-    private var userToken: String? { didSet { UserDefaults.standard.set(userToken, forKey: "cx.sbUserToken") } }
+    private var userToken: String? { didSet { Keychain.set(userToken, for: K.userToken) } }
 
     var isConfigured: Bool { SupabaseConfig.isConfigured }
     var isAdminSignedIn: Bool { adminToken != nil }
@@ -43,7 +66,7 @@ final class SupabaseService: ObservableObject {
             throw SBError.http(401, params["error_description"] ?? "Sign-in was cancelled or failed.")
         }
         userToken = access
-        UserDefaults.standard.set(params["refresh_token"], forKey: "cx.sbUserRefresh")
+        Keychain.set(params["refresh_token"], for: K.userRefresh)
         let email = try? await fetchUserEmail(access)
         userEmail = email
         UserDefaults.standard.set(email, forKey: "cx.sbUserEmail")
@@ -53,7 +76,7 @@ final class SupabaseService: ObservableObject {
     func signOutPlayer() {
         userToken = nil
         userEmail = nil
-        UserDefaults.standard.removeObject(forKey: "cx.sbUserRefresh")
+        Keychain.delete(K.userRefresh)
         UserDefaults.standard.removeObject(forKey: "cx.sbUserEmail")
     }
 

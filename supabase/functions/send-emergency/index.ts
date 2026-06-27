@@ -15,14 +15,20 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { apnsJWT, sendPush } from "../_shared/apns.ts";
 
 // Local wall-clock in a given IANA timezone: { date: "YYYY-MM-DD", minutes }.
-function localNow(tz: string): { date: string; minutes: number } {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-    }).formatToParts(new Date()).map((p) => [p.type, p.value]),
-  );
-  return { date: `${parts.year}-${parts.month}-${parts.day}`, minutes: (+parts.hour) * 60 + (+parts.minute) };
+// Returns null for an invalid/unknown timezone string (a device could register
+// a garbage value) so one bad row can't throw and abort the whole run.
+function localNow(tz: string): { date: string; minutes: number } | null {
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+      }).formatToParts(new Date()).map((p) => [p.type, p.value]),
+    );
+    return { date: `${parts.year}-${parts.month}-${parts.day}`, minutes: (+parts.hour) * 60 + (+parts.minute) };
+  } catch {
+    return null; // RangeError: invalid time zone
+  }
 }
 
 Deno.serve(async () => {
@@ -51,6 +57,7 @@ Deno.serve(async () => {
   let delivered = 0;
   for (const tz of zones) {
     const now = localNow(tz);
+    if (!now) continue; // skip devices that registered an invalid timezone
     for (const e of emergencies) {
       if (done.has(`${e.id}|${tz}`)) continue;
       const target = (e.local_hour as number) * 60 + (e.local_minute as number);

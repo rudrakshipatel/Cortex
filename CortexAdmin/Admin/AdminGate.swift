@@ -1,26 +1,100 @@
 import SwiftUI
-import CryptoKit
+import CommonCrypto
+import Security
 
-/// Stores and verifies the admin PIN. The PIN itself is never persisted —
-/// only its SHA-256 hash is kept in UserDefaults.
+/// Stores and verifies the admin PIN.
+///
+/// The PIN is never persisted. We store a **PBKDF2-SHA256** hash (150k
+/// iterations) with a random per-install salt in the **Keychain**, and we
+/// rate-limit verification with an escalating lockout. A short numeric PIN can't
+/// be made un-brute-forceable on a device an attacker fully controls, but the
+/// salt defeats precomputation and the lockout makes online guessing impractical.
 enum AdminAccess {
-    private static let key = "cx.adminPINHash"
+    private static let saltKey = "cx.adminPINSalt"        // Keychain
+    private static let hashKey = "cx.adminPINHash"        // Keychain
+    private static let failKey = "cx.adminPINFails"       // UserDefaults (not secret)
+    private static let lockKey = "cx.adminPINLockUntil"   // UserDefaults (not secret)
+    private static let maxAttempts = 5
+    private static let iterations = 150_000
 
-    static var isConfigured: Bool {
-        !(UserDefaults.standard.string(forKey: key) ?? "").isEmpty
+    static var isConfigured: Bool { Keychain.get(hashKey) != nil }
+
+    // MARK: PBKDF2
+
+    private static func derive(_ pin: String, salt: Data) -> String {
+        let pinBytes = Array(pin.utf8)
+        let saltBytes = [UInt8](salt)
+        var out = [UInt8](repeating: 0, count: 32)
+        CCKeyDerivationPBKDF(
+            CCPBKDFAlgorithm(kCCPBKDF2),
+            pin, pinBytes.count,
+            saltBytes, saltBytes.count,
+            CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+            UInt32(iterations),
+            &out, out.count)
+        return Data(out).base64EncodedString()
     }
 
-    private static func hash(_ pin: String) -> String {
-        SHA256.hash(data: Data(pin.utf8)).map { String(format: "%02x", $0) }.joined()
+    private static func randomSalt() -> Data {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Data(bytes)
+    }
+
+    /// Constant-time string comparison (avoids leaking match progress via timing).
+    private static func constantTimeEqual(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        guard x.count == y.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<x.count { diff |= x[i] ^ y[i] }
+        return diff == 0
     }
 
     static func setPIN(_ pin: String) {
-        UserDefaults.standard.set(hash(pin), forKey: key)
+        let salt = randomSalt()
+        Keychain.set(salt.base64EncodedString(), for: saltKey)
+        Keychain.set(derive(pin, salt: salt), for: hashKey)
+        UserDefaults.standard.removeObject(forKey: "cx.adminPINHash_legacy")
+        resetFailures()
     }
 
     static func verify(_ pin: String) -> Bool {
-        guard let stored = UserDefaults.standard.string(forKey: key) else { return false }
-        return stored == hash(pin)
+        guard let saltB64 = Keychain.get(saltKey), let salt = Data(base64Encoded: saltB64),
+              let stored = Keychain.get(hashKey) else { return false }
+        return constantTimeEqual(derive(pin, salt: salt), stored)
+    }
+
+    // MARK: Lockout
+
+    static var isLockedOut: Bool { lockoutRemaining > 0 }
+
+    /// Seconds remaining on the current lockout (0 if not locked).
+    static var lockoutRemaining: Int {
+        let until = UserDefaults.standard.double(forKey: lockKey)
+        return max(0, Int(until.rounded() - Date().timeIntervalSince1970))
+    }
+
+    static var attemptsRemaining: Int {
+        max(0, maxAttempts - UserDefaults.standard.integer(forKey: failKey))
+    }
+
+    /// Record a wrong PIN. Once `maxAttempts` is hit, lock for an escalating
+    /// window (30s, then doubling, capped at 1 hour).
+    static func registerFailure() {
+        let d = UserDefaults.standard
+        let fails = d.integer(forKey: failKey) + 1
+        d.set(fails, forKey: failKey)
+        if fails >= maxAttempts {
+            let over = Double(fails - maxAttempts)
+            let delay = min(30.0 * pow(2.0, over), 3600)
+            d.set(Date().timeIntervalSince1970 + delay, forKey: lockKey)
+        }
+    }
+
+    static func resetFailures() {
+        let d = UserDefaults.standard
+        d.removeObject(forKey: failKey)
+        d.removeObject(forKey: lockKey)
     }
 }
 
@@ -50,6 +124,9 @@ private struct AdminGate: View {
     @State private var firstEntry = ""        // for create-confirm
     @State private var error: String?
     @State private var shake = 0
+    @State private var lockRemaining = AdminAccess.lockoutRemaining
+
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     enum Stage { case create, confirm, enter }
     private let pinLength = 4
@@ -72,14 +149,22 @@ private struct AdminGate: View {
                     .multilineTextAlignment(.center).padding(.horizontal, 24)
 
                 dots.modifier(Shake(animatableData: CGFloat(shake)))
-                if let error { Text(error).font(CX.label(13)).foregroundStyle(CX.orange) }
+                if lockRemaining > 0 {
+                    Text("Too many attempts. Try again in \(lockRemaining)s.")
+                        .font(CX.label(13)).foregroundStyle(CX.orange)
+                } else if let error {
+                    Text(error).font(CX.label(13)).foregroundStyle(CX.orange)
+                }
 
                 Spacer()
                 PINPad { digit in append(digit) } onDelete: { backspace() }
                     .padding(.bottom, 12)
+                    .disabled(lockRemaining > 0)
+                    .opacity(lockRemaining > 0 ? 0.4 : 1)
             }
             .padding(.horizontal, 22).padding(.vertical, 16)
         }
+        .onReceive(tick) { _ in lockRemaining = AdminAccess.lockoutRemaining }
     }
 
     private var title: String {
@@ -109,7 +194,7 @@ private struct AdminGate: View {
     }
 
     private func append(_ d: String) {
-        guard entry.count < pinLength else { return }
+        guard lockRemaining == 0, entry.count < pinLength else { return }
         error = nil
         entry += d
         if entry.count == pinLength { submit() }
@@ -131,8 +216,19 @@ private struct AdminGate: View {
                 stage = .create; firstEntry = ""
             }
         case .enter:
-            if AdminAccess.verify(entry) { onUnlock() }
-            else { fail("Incorrect PIN") }
+            if AdminAccess.verify(entry) {
+                AdminAccess.resetFailures()
+                lockRemaining = 0
+                onUnlock()
+            } else {
+                AdminAccess.registerFailure()
+                lockRemaining = AdminAccess.lockoutRemaining
+                if lockRemaining > 0 {
+                    fail("Too many attempts. Locked for \(lockRemaining)s.")
+                } else {
+                    fail("Incorrect PIN · \(AdminAccess.attemptsRemaining) tries left")
+                }
+            }
         }
     }
 

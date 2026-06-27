@@ -16,10 +16,16 @@ create table if not exists public.devices (
 );
 
 -- Upsert a device + its timezone without exposing the table to clients.
+-- Only accept a timezone that Postgres recognises as a real IANA zone; any other
+-- value (a malformed or malicious client string) is stored as NULL so it can
+-- never reach the emergency sender. Tokens are validated as non-empty too.
 create or replace function public.register_device(p_token text, p_timezone text)
 returns void language sql security definer set search_path = public as $$
   insert into public.devices (apns_token, timezone)
-  values (p_token, p_timezone)
+  select
+    p_token,
+    (select name from pg_timezone_names where name = p_timezone)
+  where coalesce(nullif(trim(p_token), ''), '') <> ''
   on conflict (apns_token) do update set timezone = excluded.timezone;
 $$;
 grant execute on function public.register_device(text, text) to anon, authenticated;

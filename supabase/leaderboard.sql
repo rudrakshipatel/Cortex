@@ -19,18 +19,27 @@ create index if not exists leaderboard_xp_idx on public.leaderboard (xp desc, up
 
 -- Upsert THIS player's own score. Anyone may call it (no auth); a player can
 -- only write the row whose UUID they hold.
+--
+-- Hardening (this is an anonymous, client-reported leaderboard, so it can never
+-- be fully cheat-proof, but we limit the damage):
+--   • XP is clamped to [0, 100_000_000] so a single call can't inject an absurd
+--     value or a negative.
+--   • Username is trimmed and capped at 40 chars (and defaulted to 'Anonymous').
+--   • On conflict the stored XP only ever moves UP (greatest of old/new), so a
+--     known UUID can't be griefed downward, only legitimately increased.
+-- For true anti-cheat, move scoring server-side and require authenticated users.
 create or replace function public.submit_score(p_player uuid, p_username text, p_xp int)
 returns void language sql security definer set search_path = public as $$
   insert into public.leaderboard (player_id, username, xp, updated_at)
   values (
     p_player,
     left(coalesce(nullif(trim(p_username), ''), 'Anonymous'), 40),
-    greatest(coalesce(p_xp, 0), 0),
+    least(greatest(coalesce(p_xp, 0), 0), 100000000),
     now()
   )
   on conflict (player_id) do update
-    set username   = excluded.username,
-        xp         = excluded.xp,
+    set username   = left(coalesce(nullif(trim(excluded.username), ''), 'Anonymous'), 40),
+        xp         = greatest(public.leaderboard.xp, excluded.xp),
         updated_at = now();
 $$;
 grant execute on function public.submit_score(uuid, text, int) to anon, authenticated;
