@@ -14,7 +14,8 @@ struct CaseFlow: View {
     @State private var showStreak = false
     @State private var showHistory = false
     @State private var showResults = false
-    @State private var recorded = false   // ensures the result is saved exactly once
+    @State private var recorded = false   // ensures grading is kicked off exactly once
+    @State private var awarded = false    // ensures rewards are applied exactly once
 
     enum Step: Int, CaseIterable { case info, tests, results, diagnosis, treatment, outcome }
 
@@ -149,12 +150,27 @@ struct CaseFlow: View {
         return parts.joined(separator: " ")
     }
 
-    /// Persist the result the moment the outcome is reached, so progress (coins,
-    /// XP, "solved" mark, streak) is saved even if the player closes the case with
-    /// the ✕ instead of tapping "Continue". Runs exactly once per case.
+    /// Reach the outcome: for server cases, grade remotely first (the answer key
+    /// lives on the server), then apply rewards. For built-in cases, grade
+    /// locally and apply immediately. Runs exactly once per case.
     private func recordOutcome() {
         guard !recorded else { return }
         recorded = true
+        if session.hasLocalKey {
+            award()
+        } else if let ref = clinicalCase.remote {
+            Task { await session.gradeRemotely(ref); award() }
+        } else {
+            session.markRevealed()   // nothing to grade against; show the outcome
+            award()
+        }
+    }
+
+    /// Persist the (now-known) result so progress survives even if the player
+    /// closes the case with ✕ instead of tapping "Continue". Runs once.
+    private func award() {
+        guard !awarded else { return }
+        awarded = true
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
         if consumesLife { app.spendEnergy(AppState.energyCost(forXP: session.earnedXP)) }
@@ -496,9 +512,15 @@ private struct DiagnosisStep: View {
                                 Text(d.name).font(CX.body(16)).foregroundStyle(CX.navy)
                                     .multilineTextAlignment(.leading)
                                 Spacer()
+                                // Server cases are graded remotely — don't reveal
+                                // correctness here, just show the selection.
                                 if let picked, picked.id == d.id {
-                                    Image(systemName: d.correct ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                        .foregroundStyle(d.correct ? CX.teal : CX.orange)
+                                    if session.hasLocalKey {
+                                        Image(systemName: d.correct ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                            .foregroundStyle(d.correct ? CX.teal : CX.orange)
+                                    } else {
+                                        Image(systemName: "checkmark.circle.fill").foregroundStyle(CX.teal)
+                                    }
                                 }
                             }
                             .padding(16).frame(maxWidth: .infinity, alignment: .leading)
@@ -516,6 +538,8 @@ private struct DiagnosisStep: View {
     }
     private func borderColor(_ d: DiagnosisOption) -> Color {
         guard let picked, picked.id == d.id else { return CX.hairline }
+        // For server cases we can't (and shouldn't) show right/wrong yet.
+        guard session.hasLocalKey else { return CX.teal }
         return d.correct ? CX.teal : CX.orange
     }
 }
@@ -612,6 +636,21 @@ private struct OutcomeStep: View {
     }
 
     var body: some View {
+        // Server cases are scored remotely; wait for the result before revealing
+        // anything (otherwise the answer/score would flash as a wrong "0").
+        if session.revealed || session.hasLocalKey {
+            content
+        } else {
+            VStack(spacing: 16) {
+                Spacer()
+                ProgressView().controlSize(.large).tint(CX.teal)
+                Text("Scoring your case…").font(CX.heading(18)).foregroundStyle(CX.navySoft)
+                Spacer()
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var content: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 // XP earned hero — out of 100 (full marks only for a perfect solve)

@@ -39,6 +39,16 @@ Reviewed against the OWASP Mobile/API risks. Findings and the mitigations in pla
 - **Admin PIN:** Salted **PBKDF2-SHA256 (150k iterations)**, hash + salt in the
   Keychain, constant-time comparison, and an escalating lockout after 5 failed
   attempts. See `CortexAdmin/Admin/AdminGate.swift`.
+- **Question/answer protection:** The case answer key (`diagnoses[].correct`,
+  `tests[].helpful`, `treatments[].appropriate`, and the outcome/mentor text) is
+  never sent to the device. The `content` / `emergencies` tables are not readable
+  by anon; clients fetch questions through `get_cases` / `get_emergencies`, which
+  return the payload with the answers **stripped out**, and attempts are scored by
+  `grade_case` on the server. Only admins can write (alter) questions.
+  *Residual:* because players are anonymous and the outcome screen must reveal the
+  answer after a submitted attempt, a scripted client could still grade each case
+  once to learn its answer. Fully closing that needs authenticated users + per-user
+  attempt records / rate-limiting on `grade_case`. See `supabase/server_grading.sql`.
 - **Leaderboard integrity:** `submit_score` clamps XP to `[0, 100_000_000]` and
   only ever moves a stored score **up**, so a known UUID can't be griefed down.
   Note: it's an anonymous, client-reported leaderboard — for true anti-cheat,
@@ -50,11 +60,12 @@ Reviewed against the OWASP Mobile/API risks. Findings and the mitigations in pla
   no plaintext endpoints.
 
 **Still depends on you:** every table's **RLS policies** must stay correctly
-applied (the app assumes anon can read content/emergencies/leaderboard and only
-admins can write). After editing `leaderboard.sql` / `schema.sql`, re-run them in
-the SQL editor and redeploy the `send-emergency` function for the DB-side
-hardening to take effect. Static review doesn't replace periodic dependency
-scanning and dynamic/penetration testing.
+applied. After editing `schema.sql` / `leaderboard.sql` / `server_grading.sql`,
+re-run them in the SQL editor and redeploy the `send-emergency` function for the
+DB-side hardening to take effect. **`server_grading.sql` is required** — until
+it's applied, the app cannot load server content (it no longer reads the tables
+directly, only the stripped RPCs). Static review doesn't replace periodic
+dependency scanning and dynamic/penetration testing.
 
 ## If a real secret is ever committed by accident
 1. **Rotate it immediately** (the leaked value must be considered compromised):

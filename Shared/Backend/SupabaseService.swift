@@ -125,10 +125,13 @@ final class SupabaseService: ObservableObject {
     }
 
     // MARK: - Content sync (every install, on launch)
+    /// Pulls published content through `get_cases`, which returns every case with
+    /// the answer key STRIPPED OUT (the raw tables are no longer readable). Each
+    /// case carries a `remote` ref so the attempt can be graded server-side.
     func syncContent(into store: ContentStore) async {
         guard isConfigured else { return }
-        guard let (data, _) = try? await send(method: "GET",
-                path: "rest/v1/content?select=id,kind,payload&order=created_at.asc"),
+        guard let (data, _) = try? await send(method: "POST",
+                path: "rest/v1/rpc/get_cases", body: Data("{}".utf8)),
               let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
 
         var clinical: [ClinicalCase] = [], daily: [DailyCase] = [], ids: [String] = []
@@ -136,25 +139,30 @@ final class SupabaseService: ObservableObject {
             guard let id = row["id"] as? String, !store.hasIngested(id),
                   let kind = row["kind"] as? String, let payload = row["payload"],
                   let pdata = try? JSONSerialization.data(withJSONObject: payload) else { continue }
+            let ref = RemoteRef(source: "content", id: id)
             switch kind {
             case "clinical":
-                if let c = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("server") { clinical.append(c); ids.append(id) }
+                if var c = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("server", requireKey: false) {
+                    c.remote = ref; clinical.append(c); ids.append(id)
+                }
             case "daily":
-                if let d = try? JSONDecoder().decode(DailyDTO.self, from: pdata).toModel("server") { daily.append(d); ids.append(id) }
+                if var d = try? JSONDecoder().decode(DailyDTO.self, from: pdata).toModel("server", requireKey: false) {
+                    d.clinicalCase.remote = ref; daily.append(d); ids.append(id)
+                }
             default: break
             }
         }
         if !ids.isEmpty { store.addRemote(clinical: clinical, daily: daily, serverIDs: ids) }
     }
 
-    /// Pull all broadcast emergencies from the server and turn them into
+    /// Pull all broadcast emergencies (answer-stripped) and turn them into
     /// `EmergencyCase`s anchored to *this device's* local timezone, so the Home
     /// "emergency" card appears during its 3-hour window even without a push.
     /// Only emergencies that haven't expired yet are returned.
     func fetchActiveEmergencies() async -> [EmergencyCase] {
         guard isConfigured,
-              let (data, _) = try? await send(method: "GET",
-                  path: "rest/v1/emergencies?select=payload,send_date,local_hour,local_minute&order=send_date.desc"),
+              let (data, _) = try? await send(method: "POST",
+                  path: "rest/v1/rpc/get_emergencies", body: Data("{}".utf8)),
               let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
 
         var cal = Calendar(identifier: .gregorian)
@@ -162,11 +170,13 @@ final class SupabaseService: ObservableObject {
         let now = Date()
         var out: [EmergencyCase] = []
         for row in rows {
-            guard let sendDate = row["send_date"] as? String,
+            guard let rowId = row["id"] as? String,
+                  let sendDate = row["send_date"] as? String,
                   let payload = row["payload"],
                   let pdata = try? JSONSerialization.data(withJSONObject: payload),
-                  let clinicalCase = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("emergency")
+                  var clinicalCase = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("emergency", requireKey: false)
             else { continue }
+            clinicalCase.remote = RemoteRef(source: "emergency", id: rowId)
             let parts = sendDate.split(separator: "-").compactMap { Int($0) }
             guard parts.count == 3 else { continue }
             var comps = DateComponents()
@@ -180,15 +190,51 @@ final class SupabaseService: ObservableObject {
         return out
     }
 
-    /// Fetch a single emergency case by its server id (after a remote push tap).
+    /// Fetch a single emergency case (answer-stripped) by its server id.
     func fetchEmergencyCase(id: UUID) async -> ClinicalCase? {
         guard isConfigured,
-              let (data, _) = try? await send(method: "GET",
-                  path: "rest/v1/emergencies?id=eq.\(id.uuidString.lowercased())&select=payload"),
-              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let payload = rows.first?["payload"],
+              let body = try? JSONSerialization.data(withJSONObject: ["p_id": id.uuidString.lowercased()]),
+              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/get_emergency", body: body),
+              let payload = try? JSONSerialization.jsonObject(with: data),
+              !(payload is NSNull),
               let pdata = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
-        return try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("emergency")
+        var c = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("emergency", requireKey: false)
+        c?.remote = RemoteRef(source: "emergency", id: id.uuidString.lowercased())
+        return c
+    }
+
+    // MARK: - Server-side grading
+    /// Result of grading an attempt: the score-derived rewards plus the full
+    /// (answer-bearing) case, returned only in response to a submitted attempt.
+    struct GradeResult {
+        let score: Double
+        let earnedXP: Int
+        let earnedCoins: Int
+        let fullCase: ClinicalCase
+    }
+
+    /// Submit an attempt (pick indices) to `grade_case`; the server scores it
+    /// against the stored answers and returns the score + the full case.
+    func gradeCase(_ ref: RemoteRef, testIdx: [Int], dxIdx: Int?, txIdx: [Int]) async -> GradeResult? {
+        guard isConfigured else { return nil }
+        var args: [String: Any] = [
+            "p_source": ref.source, "p_id": ref.id,
+            "p_test_idx": testIdx, "p_tx_idx": txIdx,
+        ]
+        if let dxIdx { args["p_dx_idx"] = dxIdx }
+        guard let body = try? JSONSerialization.data(withJSONObject: args),
+              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/grade_case", body: body),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let caseObj = obj["case"], !(caseObj is NSNull),
+              let pdata = try? JSONSerialization.data(withJSONObject: caseObj),
+              let full = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("graded")
+        else { return nil }
+        var graded = full
+        graded.remote = ref
+        let score = (obj["score"] as? NSNumber)?.doubleValue ?? 0
+        let xp = (obj["earned_xp"] as? NSNumber)?.intValue ?? 0
+        let coins = (obj["earned_coins"] as? NSNumber)?.intValue ?? 0
+        return GradeResult(score: score, earnedXP: xp, earnedCoins: coins, fullCase: graded)
     }
 
     // MARK: - Global leaderboard

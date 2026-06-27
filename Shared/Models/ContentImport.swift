@@ -23,8 +23,8 @@ struct DailyDTO: Codable {
         case clinicalCase = "case"   // JSON key is "case"
     }
 
-    func toModel(_ label: String) throws -> DailyCase {
-        DailyCase(clinicalCase: try clinicalCase.toModel("\(label) case"),
+    func toModel(_ label: String, requireKey: Bool = true) throws -> DailyCase {
+        DailyCase(clinicalCase: try clinicalCase.toModel("\(label) case", requireKey: requireKey),
                   date: DateParse.day(date) ?? Date())
     }
 }
@@ -93,15 +93,20 @@ struct CaseDTO: Codable {
     var imageName: String?          // hero image asset name
     var difficulty: Int?            // 1…5
 
-    func toModel(_ label: String) throws -> ClinicalCase {
+    /// `requireKey` is true for authored/imported cases (which must declare the
+    /// correct answer) and false for server-delivered cases, which arrive with
+    /// the answer key stripped out and are graded server-side instead.
+    func toModel(_ label: String, requireKey: Bool = true) throws -> ClinicalCase {
         guard !specialty.trimmed.isEmpty, !patientName.trimmed.isEmpty, !chiefComplaint.trimmed.isEmpty else {
             throw ImportError.field("\(label): 'specialty', 'patientName' and 'chiefComplaint' are required")
         }
         let dx = diagnoses.filter { !$0.name.trimmed.isEmpty }
-                          .map { DiagnosisOption(name: $0.name.trimmed, correct: $0.correct) }
+                          .map { DiagnosisOption(name: $0.name.trimmed, correct: $0.correct ?? false) }
         guard dx.count >= 2 else { throw ImportError.field("\(label): needs at least 2 diagnoses") }
-        guard dx.contains(where: \.correct) else {
-            throw ImportError.field("\(label): one diagnosis must have \"correct\": true")
+        if requireKey {
+            guard dx.contains(where: \.correct) else {
+                throw ImportError.field("\(label): one diagnosis must have \"correct\": true")
+            }
         }
         return ClinicalCase(
             specialty: specialty.trimmed,
@@ -187,7 +192,7 @@ struct SectionDTO: Codable { var bullets: [String]?; var mentor: String? }
 
 struct InfoCardDTO: Codable { var title: String; var bullets: [String]; var mentor: String? }
 struct TestDTO: Codable { var category: String?; var name: String; var result: String?; var helpful: Bool?; var mentor: String? }
-struct DiagnosisDTO: Codable { var name: String; var correct: Bool }
+struct DiagnosisDTO: Codable { var name: String; var correct: Bool? }   // absent on server-stripped cases
 struct TreatmentDTO: Codable { var category: String?; var name: String; var appropriate: Bool? }
 
 // MARK: - Result & errors

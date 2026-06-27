@@ -398,6 +398,16 @@ struct ClinicalCase: Identifiable, Codable {
     var teaser: String? = nil       // narrative hook shown on the card
     var imageName: String? = nil    // hero image asset name (added to the app)
     var difficulty: Int? = nil      // 1 (easy) … 5 (hard)
+    /// If this case came from the server it arrives answer-stripped; this points
+    /// back to the row so the attempt can be graded server-side (where the
+    /// answers live). `nil` for built-in cases, which carry their own key.
+    var remote: RemoteRef? = nil
+}
+
+/// Where a server case lives, so we can grade it remotely.
+struct RemoteRef: Codable, Equatable {
+    var source: String   // "content" (clinical/daily) or "emergency"
+    var id: String       // the table row's UUID
 }
 
 /// Coin-locked expert teaching attached to a case (shown on the answer screen).
@@ -490,11 +500,24 @@ struct TreatmentOption: Identifiable, Equatable, Codable {
 // MARK: - Per-case progress while playing
 @MainActor
 final class CaseSession: ObservableObject {
-    let clinicalCase: ClinicalCase
+    /// The case being played. For server cases this starts answer-stripped and
+    /// is replaced with the full (answer-bearing) case once it's been graded.
+    @Published private(set) var clinicalCase: ClinicalCase
     @Published var tray: [TestOption] = []
     @Published var pickedDiagnosis: DiagnosisOption?
     @Published var treatmentTray: [TreatmentOption] = []
     @Published var mentorUnlocked = false
+    /// Server cases are scored remotely; this flips true once the result is in
+    /// (or grading failed). The outcome screen waits on it before revealing.
+    @Published private(set) var revealed = false
+
+    /// True when the case carries its own answer key (built-in/seed cases).
+    /// Server cases arrive stripped of answers and are graded remotely instead.
+    var hasLocalKey: Bool { clinicalCase.diagnoses.contains { $0.correct } }
+
+    /// Server-authoritative reward, set when a remote case is graded.
+    private var serverXP: Int?
+    private var serverCoins: Int?
 
     init(_ c: ClinicalCase) { self.clinicalCase = c }
 
@@ -533,8 +556,51 @@ final class CaseSession: ObservableObject {
     /// XP for this attempt — out of a fixed 100. The full 100 is awarded only
     /// for a completely correct solve (perfect workup quality).
     static let maxXP = 100
-    var earnedXP: Int { Int((performance * Double(Self.maxXP)).rounded()) }
+    var earnedXP: Int { serverXP ?? Int((performance * Double(Self.maxXP)).rounded()) }
 
     /// Coins for this attempt — scale with the case's own reward value.
-    var earnedCoins: Int { Int((performance * Double(clinicalCase.xpReward)).rounded()) }
+    var earnedCoins: Int { serverCoins ?? Int((performance * Double(clinicalCase.xpReward)).rounded()) }
+
+    // MARK: Server-side grading (answers never ship to the device)
+
+    /// The picked options as array indices into the played (stripped) case —
+    /// these line up with the server's stored arrays because stripping keeps
+    /// option order intact.
+    private func pickedIndices() -> (tests: [Int], dx: Int?, tx: [Int]) {
+        let t = tray.compactMap { p in clinicalCase.tests.firstIndex { $0.id == p.id } }
+        let d = pickedDiagnosis.flatMap { p in clinicalCase.diagnoses.firstIndex { $0.id == p.id } }
+        let x = treatmentTray.compactMap { p in clinicalCase.treatments.firstIndex { $0.id == p.id } }
+        return (t, d, x)
+    }
+
+    /// Grade a server case: submit the picks, get back the score and the full
+    /// (answer-bearing) case, then reveal it so the outcome screen renders as
+    /// usual. Marks `revealed` even on failure so the flow never hangs.
+    func gradeRemotely(_ ref: RemoteRef) async {
+        let picks = pickedIndices()
+        if let result = await SupabaseService.shared.gradeCase(
+            ref, testIdx: picks.tests, dxIdx: picks.dx, txIdx: picks.tx) {
+            apply(full: result.fullCase, xp: result.earnedXP, coins: result.earnedCoins, picks: picks)
+        }
+        revealed = true
+    }
+
+    /// Mark the outcome ready without remote grading (built-in cases, or a case
+    /// with neither a local key nor a server ref).
+    func markRevealed() { revealed = true }
+
+    /// Swap the stripped case for the graded one and re-map the player's picks
+    /// onto the now-complete option objects (so the review screens show ✓/✗).
+    private func apply(full: ClinicalCase, xp: Int, coins: Int,
+                       picks: (tests: [Int], dx: Int?, tx: [Int])) {
+        var graded = full
+        graded.id = clinicalCase.id          // keep the progress-tracking id stable
+        graded.remote = clinicalCase.remote
+        tray = picks.tests.compactMap { graded.tests.indices.contains($0) ? graded.tests[$0] : nil }
+        pickedDiagnosis = picks.dx.flatMap { graded.diagnoses.indices.contains($0) ? graded.diagnoses[$0] : nil }
+        treatmentTray = picks.tx.compactMap { graded.treatments.indices.contains($0) ? graded.treatments[$0] : nil }
+        clinicalCase = graded
+        serverXP = xp
+        serverCoins = coins
+    }
 }
