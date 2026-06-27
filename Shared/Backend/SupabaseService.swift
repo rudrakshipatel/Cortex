@@ -361,6 +361,39 @@ final class SupabaseService: ObservableObject {
         return rows
     }
 
+    // MARK: - Weekly leagues (real players, rooms of ≤30)
+
+    struct LeagueMember: Decodable {
+        let player_id: String
+        let username: String
+        let weekly_xp: Int
+        let total_xp: Int
+        let trophies: Int
+        let rank: Int
+    }
+
+    /// Join (or update) the signed-in player's league room for the week. The
+    /// server places them in a room of the same `kind` with a free seat, or a new
+    /// room when all are full. No-ops when not signed in.
+    func reportLeague(week: Int, kind: String, weeklyXP: Int, totalXP: Int,
+                      trophies: Int, username: String) async {
+        guard isConfigured, isSignedIn,
+              let body = try? JSONSerialization.data(withJSONObject: [
+                "p_week": week, "p_kind": kind, "p_weekly_xp": weeklyXP,
+                "p_total_xp": totalXP, "p_trophies": trophies, "p_username": username]) else { return }
+        _ = try? await send(method: "POST", path: "rest/v1/rpc/report_league", body: body, player: true)
+    }
+
+    /// The ≤30 real players in the caller's league room for the week, ranked.
+    func fetchLeague(week: Int) async -> [LeagueMember] {
+        guard isConfigured, isSignedIn,
+              let body = try? JSONSerialization.data(withJSONObject: ["p_week": week]),
+              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/get_league", body: body, player: true),
+              let rows = try? JSONDecoder().decode([LeagueMember].self, from: data)
+        else { return [] }
+        return rows
+    }
+
     // MARK: - Admin auth
     func signIn(email: String, password: String) async throws {
         guard isConfigured else { throw SBError.notConfigured }

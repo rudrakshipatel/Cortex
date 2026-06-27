@@ -970,13 +970,27 @@ private struct CaseRewardCover: View {
     @EnvironmentObject var app: AppState
     @State private var page = 0
 
-    /// The player's current weekly league standing.
-    private var board: [LeagueEntry] {
-        let you = LeagueEntry(name: app.displayName, weeklyXP: app.weeklyXP,
-                              totalXP: app.lifetimeXP, trophies: app.gold, isYou: true)
-        return Seed.leagueBoard(week: AppState.gmtWeek(), you: you)
-    }
+    /// The player's current weekly league room (real players), loaded on appear.
+    @State private var board: [LeagueEntry] = []
     private var myIndex: Int { board.firstIndex { $0.isYou } ?? 0 }
+
+    /// A fallback "you" row used until the real room loads (or if offline).
+    private var youEntry: LeagueEntry {
+        var e = LeagueEntry(name: app.displayName, weeklyXP: app.weeklyXP,
+                            totalXP: app.lifetimeXP, trophies: app.gold, isYou: true)
+        e.rank = 1
+        return e
+    }
+
+    /// Report this week's score, then pull the real league room to show the rank.
+    private func loadLeague() async {
+        let week = AppState.gmtWeek()
+        await SupabaseService.shared.reportLeague(
+            week: week, kind: app.skill.name, weeklyXP: app.weeklyXP,
+            totalXP: app.lifetimeXP, trophies: app.gold, username: app.displayName)
+        let members = await SupabaseService.shared.fetchLeague(week: week)
+        board = Seed.leagueEntries(from: members, youId: SupabaseService.shared.userId)
+    }
 
     var body: some View {
         AppBackground {
@@ -989,11 +1003,12 @@ private struct CaseRewardCover: View {
             }
             .transition(.opacity)
         }
+        .task { await loadLeague() }
     }
 
     // Page 0 — weekly league position (matches the video's "Rank up complete").
     private var rankPage: some View {
-        let me = board[myIndex]
+        let me = board.indices.contains(myIndex) ? board[myIndex] : youEntry
         let below = myIndex + 1 < board.count ? board[myIndex + 1] : nil
         let mid = Seed.leagueSize - Seed.leaguePromotionCount - Seed.leagueDemotionCount
         return VStack(spacing: 16) {

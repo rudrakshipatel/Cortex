@@ -297,14 +297,24 @@ struct LeaguesView: View {
 
     private var tierColor: Color { app.skill.color }
 
-    /// The weekly league — deterministic bots for this week plus the player,
-    /// ranked by XP earned this week.
-    private var board: [LeagueEntry] {
-        let you = LeagueEntry(name: app.displayName, weeklyXP: app.weeklyXP,
-                              totalXP: app.lifetimeXP, trophies: app.gold, isYou: true, avatarTint: CX.orange)
-        return Seed.leagueBoard(week: AppState.gmtWeek(), you: you)
-    }
+    /// The real players in the user's weekly league room (≤30), loaded from the
+    /// server and ranked by XP earned this week.
+    @State private var board: [LeagueEntry] = []
+    @State private var loadingLeague = false
     private var myEntry: LeagueEntry? { board.first { $0.isYou } }
+
+    /// Join/refresh the user's league room and pull its real members.
+    private func refreshLeague() async {
+        let week = AppState.gmtWeek()
+        if app.qualifiedForLeague {
+            await SupabaseService.shared.reportLeague(
+                week: week, kind: app.skill.name, weeklyXP: app.weeklyXP,
+                totalXP: app.lifetimeXP, trophies: app.gold, username: app.displayName)
+        }
+        let members = await SupabaseService.shared.fetchLeague(week: week)
+        board = Seed.leagueEntries(from: members, youId: SupabaseService.shared.userId)
+        loadingLeague = false
+    }
 
     var body: some View {
         ZStack {
@@ -319,9 +329,12 @@ struct LeaguesView: View {
             CaseFlow(clinicalCase: c, consumesLife: true)
         }
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
-        .onAppear { app.refreshForNewDay(); ensureRandom() }
-        .task { await SupabaseService.shared.submitScore(
-            playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP) }
+        .onAppear { app.refreshForNewDay(); ensureRandom(); loadingLeague = board.isEmpty }
+        .task {
+            await SupabaseService.shared.submitScore(
+                playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP)
+            await refreshLeague()
+        }
     }
 
     // MARK: Not-qualified (themed tier intro)
@@ -382,14 +395,23 @@ struct LeaguesView: View {
                 }
                 .padding(.top, 4)
 
-                ForEach(Array(board.enumerated()), id: \.element.id) { idx, entry in
-                    if idx == Seed.leaguePromotionCount {
-                        zoneDivider("PROMOTION ZONE", color: CX.teal)
+                if board.isEmpty {
+                    VStack(spacing: 10) {
+                        ProgressView().tint(tierColor)
+                        Text(loadingLeague ? "Loading your league…" : "Waiting for competitors to join…")
+                            .font(CX.body(14)).foregroundStyle(CX.navySoft)
+                    }.padding(.vertical, 40)
+                } else {
+                    ForEach(Array(board.enumerated()), id: \.element.id) { idx, entry in
+                        if idx == Seed.leaguePromotionCount {
+                            zoneDivider("PROMOTION ZONE", color: CX.teal)
+                        }
+                        if board.count > Seed.leagueSize - Seed.leagueDemotionCount,
+                           idx == board.count - Seed.leagueDemotionCount {
+                            zoneDivider("DEMOTION ZONE", color: CX.orange)
+                        }
+                        leagueRow(entry)
                     }
-                    if idx == board.count - Seed.leagueDemotionCount {
-                        zoneDivider("DEMOTION ZONE", color: CX.orange)
-                    }
-                    leagueRow(entry)
                 }
 
                 inviteCard.padding(.top, 6)
