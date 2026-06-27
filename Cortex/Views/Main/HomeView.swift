@@ -658,7 +658,10 @@ struct MeView: View {
                 // Save this account's progress, then sign out (returns to sign-in).
                 Task { await app.unbindAccount(); SupabaseService.shared.signOutPlayer() }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Stay Logged In", role: .cancel) {}
+        } message: {
+            Text(SupabaseService.shared.userEmail.map { "Signed in as \($0).\nYour progress is saved to your account — you'll need to sign in again to play." }
+                 ?? "Your progress is saved to your account — you'll need to sign in again to play.")
         }
     }
 

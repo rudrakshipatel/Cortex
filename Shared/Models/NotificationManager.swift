@@ -27,16 +27,21 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// alert sound if the file isn't present.
     static let sirenSound = UNNotificationSound(named: UNNotificationSoundName("siren.caf"))
 
-    /// Schedules the emergency alert on this device for the given local date/time.
-    func scheduleEmergency(id: UUID, at date: Date) {
+    private func emergencyContent() -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = "🚨 Emergency — you're on call"
         content.body = "There's an emergency and you're the only doctor available on site. Tap to respond."
         // Ambulance-siren sound. Add an audio file named `siren.caf` (≤30s) to the
         // Cortex app target for this to play; otherwise iOS uses the default sound.
         content.sound = Self.sirenSound
-        content.userInfo = ["emergencyID": id.uuidString]
+        content.interruptionLevel = .timeSensitive   // break through Focus when live
+        return content
+    }
 
+    /// Schedules the emergency alert on this device for the given local date/time.
+    func scheduleEmergency(id: UUID, at date: Date) {
+        let content = emergencyContent()
+        content.userInfo = ["emergencyID": id.uuidString]
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
         let request = UNNotificationRequest(identifier: id.uuidString, content: content, trigger: trigger)
@@ -45,6 +50,48 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     func cancel(id: UUID) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id.uuidString])
+    }
+
+    // MARK: Server emergencies → local alerts
+    private static let notifiedKey = "cx.notifiedEmergencies"
+
+    /// Make sure every server emergency triggers exactly one alert on this device:
+    /// scheduled at its fire time if it's still upcoming, or fired right away if
+    /// it's already live and we haven't alerted for it yet. Idempotent — safe to
+    /// call on every launch/foreground.
+    func syncEmergencyNotifications(_ emergencies: [EmergencyCase]) {
+        guard !emergencies.isEmpty else { return }
+        requestAuthorization { granted in
+            guard granted else { return }
+            let now = Date()
+            var notified = Set(UserDefaults.standard.stringArray(forKey: Self.notifiedKey) ?? [])
+            for ec in emergencies {
+                let idStr = ec.id.uuidString
+                if notified.contains(idStr) {
+                    if now < ec.fireDate { self.scheduleEmergency(id: ec.id, at: ec.fireDate) } // keep fresh
+                    continue
+                }
+                if now < ec.fireDate {
+                    self.scheduleEmergency(id: ec.id, at: ec.fireDate)
+                    notified.insert(idStr)
+                } else if now < ec.expiry {              // already live → alert immediately
+                    self.fireEmergencyNow(id: ec.id)
+                    notified.insert(idStr)
+                }
+            }
+            // Forget ids no longer present so re-broadcasts can alert again.
+            let live = Set(emergencies.map { $0.id.uuidString })
+            notified.formIntersection(live)
+            UserDefaults.standard.set(Array(notified), forKey: Self.notifiedKey)
+        }
+    }
+
+    private func fireEmergencyNow(id: UUID) {
+        let content = emergencyContent()
+        content.userInfo = ["emergencyID": id.uuidString]
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: id.uuidString, content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
     }
 
     // MARK: Daily case reminder

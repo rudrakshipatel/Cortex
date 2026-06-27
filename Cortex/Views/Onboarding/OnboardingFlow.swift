@@ -415,8 +415,8 @@ private struct ReminderScreen: View {
             Spacer()
             CXButton(title: "Let's GO") {
                 if pick == 0 {
-                    // "Remind Me" → daily reminder at 10:00 local time.
-                    NotificationManager.shared.scheduleDailyReminder(hour: 10, minute: 0)
+                    // "Remind Me" → daily reminder at 11:00 local time.
+                    NotificationManager.shared.scheduleDailyReminder(hour: 11, minute: 0)
                 } else {
                     NotificationManager.shared.cancelDailyReminder()
                 }

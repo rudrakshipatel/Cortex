@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 
 struct MainTabView: View {
     @EnvironmentObject var store: ContentStore
@@ -236,14 +237,39 @@ struct GoProSheet: View {
     }
 
     private var proActiveCard: some View {
-        CXCard(borderColor: CX.teal) {
-            VStack(spacing: 8) {
-                Image(systemName: "checkmark.seal.fill").font(.system(size: 34)).foregroundStyle(CX.teal)
-                Text("You're Pro! 🎉").font(CX.heading(20)).foregroundStyle(CX.navy)
-                Text("All advanced cases and mentor reasoning are unlocked.")
-                    .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
-            }.frame(maxWidth: .infinity).padding(.vertical, 6)
+        VStack(spacing: 14) {
+            CXCard(borderColor: CX.teal) {
+                VStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill").font(.system(size: 34)).foregroundStyle(CX.teal)
+                    Text("You're Pro! 🎉").font(CX.heading(20)).foregroundStyle(CX.navy)
+                    Text("All advanced cases and mentor reasoning are unlocked.")
+                        .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                }.frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            Button { manageSubscriptions() } label: {
+                Text("Manage or Cancel Subscription")
+                    .font(CX.heading(16)).foregroundStyle(CX.navy)
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
+            }.buttonStyle(PressStyle())
+            Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
+                .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
         }
+    }
+
+    /// Open Apple's native Manage Subscriptions sheet (the only sanctioned way to
+    /// cancel an auto-renewing subscription — it can't be cancelled in-app).
+    private func manageSubscriptions() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene else {
+            // Fall back to the App Store subscriptions page.
+            if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
+                UIApplication.shared.open(url)
+            }
+            return
+        }
+        Task { try? await AppStore.showManageSubscriptions(in: scene) }
     }
 
     private func proRow(_ t: String) -> some View {

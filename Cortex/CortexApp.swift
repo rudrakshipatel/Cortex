@@ -26,7 +26,11 @@ struct CortexApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         app.refreshForNewDay()
-                        Task { store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies()) }
+                        Task {
+                            let ems = await SupabaseService.shared.fetchActiveEmergencies()
+                            store.setServerEmergencies(ems)
+                            NotificationManager.shared.syncEmergencyNotifications(ems)
+                        }
                     } else {
                         // Persist this account's progress when leaving the foreground.
                         Task { await app.pushProfileNow() }
@@ -42,7 +46,9 @@ struct CortexApp: App {
                     // Cold launch with a restored session → load the account's profile.
                     if SupabaseService.shared.isSignedIn { await app.bindAccount() }
                     await SupabaseService.shared.syncContent(into: store)
-                    store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies())
+                    let ems = await SupabaseService.shared.fetchActiveEmergencies()
+                    store.setServerEmergencies(ems)
+                    NotificationManager.shared.syncEmergencyNotifications(ems)
                     await SupabaseService.shared.submitScore(
                         playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP)
                 }
