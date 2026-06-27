@@ -87,6 +87,57 @@ final class SupabaseService: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "cx.sbUserId")
     }
 
+    // MARK: Email sign-in (6-digit code)
+
+    /// Email an account a 6-digit sign-in code (creates the account if new).
+    /// NOTE: for a CODE (not a magic link) to be sent, the Supabase "Magic Link"
+    /// email template must include `{{ .Token }}` (Supabase ▸ Auth ▸ Templates).
+    func sendEmailCode(_ email: String) async throws {
+        guard isConfigured, let url = URL(string: "\(SupabaseConfig.url)/auth/v1/otp") else { throw SBError.notConfigured }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "create_user": true])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw SBError.http((resp as? HTTPURLResponse)?.statusCode ?? 0,
+                               Self.authError(data) ?? "Couldn't send the code. Check the email and try again.")
+        }
+    }
+
+    /// Verify the 6-digit code and start the player session. Returns the email.
+    @discardableResult
+    func verifyEmailCode(_ email: String, code: String) async throws -> String? {
+        guard isConfigured, let url = URL(string: "\(SupabaseConfig.url)/auth/v1/verify") else { throw SBError.notConfigured }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["type": "email", "email": email, "token": code])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let access = obj["access_token"] as? String else {
+            throw SBError.http((resp as? HTTPURLResponse)?.statusCode ?? 0,
+                               Self.authError(data) ?? "That code didn't work. Check it or request a new one.")
+        }
+        userToken = access
+        Keychain.set(obj["refresh_token"] as? String, for: K.userRefresh)
+        let userObj = obj["user"] as? [String: Any]
+        userId = userObj?["id"] as? String
+        userEmail = (userObj?["email"] as? String) ?? email
+        UserDefaults.standard.set(userEmail, forKey: "cx.sbUserEmail")
+        UserDefaults.standard.set(userId, forKey: "cx.sbUserId")
+        return userEmail
+    }
+
+    /// Pull a human-readable message out of a Supabase auth error body.
+    private static func authError(_ data: Data) -> String? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (obj["msg"] ?? obj["error_description"] ?? obj["error"] ?? obj["message"]) as? String
+    }
+
     /// GET /auth/v1/user to read the signed-in account's id + email.
     private func fetchUser(_ accessToken: String) async throws -> (id: String, email: String?)? {
         guard let url = URL(string: "\(SupabaseConfig.url)/auth/v1/user") else { return nil }

@@ -104,6 +104,7 @@ private struct AuthScreen: View {
     @EnvironmentObject var sb: SupabaseService
     @State private var working: String?     // which provider is in-flight
     @State private var error: String?
+    @State private var showEmail = false
 
     var body: some View {
         VStack(spacing: 22) {
@@ -121,6 +122,18 @@ private struct AuthScreen: View {
                            fg: .white, bg: AnyShapeStyle(CX.navyBar), provider: "google")
                 authButton("Sign in with Apple", system: "applelogo",
                            fg: .white, bg: AnyShapeStyle(Color.black), provider: "apple")
+                Button { showEmail = true } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "envelope.fill")
+                        Text("Sign in with Email")
+                    }
+                    .font(CX.heading(17)).foregroundStyle(CX.navy)
+                    .frame(maxWidth: .infinity).padding(.vertical, 17)
+                    .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
+                }
+                .buttonStyle(PressStyle())
+                .disabled(working != nil)
 
                 if let error {
                     Text(error).font(CX.label(13)).foregroundStyle(CX.orange)
@@ -134,6 +147,7 @@ private struct AuthScreen: View {
             }
         }
         .padding(.horizontal, 24).padding(.bottom, 24)
+        .sheet(isPresented: $showEmail) { EmailSignInSheet() }
     }
 
     private func authButton(_ title: String, system: String, fg: Color, bg: AnyShapeStyle, provider: String) -> some View {
@@ -172,15 +186,162 @@ private struct AuthScreen: View {
     }
 }
 
+// MARK: - 2b. Email sign-in (6-digit code)
+private struct EmailSignInSheet: View {
+    @EnvironmentObject var app: AppState
+    @EnvironmentObject var sb: SupabaseService
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    enum Stage { case email, code }
+    @State private var stage: Stage = .email
+    @State private var email = ""
+    @State private var code = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    private var emailValid: Bool {
+        let e = email.trimmingCharacters(in: .whitespaces)
+        return e.contains("@") && e.contains(".") && e.count >= 5
+    }
+
+    var body: some View {
+        AppBackground {
+            VStack(spacing: 20) {
+                HStack {
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 26)).foregroundStyle(CX.navySoft)
+                    }
+                }
+                Spacer()
+                Image(systemName: stage == .email ? "envelope.fill" : "lock.shield.fill")
+                    .font(.system(size: 52)).foregroundStyle(CX.teal)
+
+                if stage == .email {
+                    Text("Sign in with Email").font(CX.title(24)).foregroundStyle(CX.navy)
+                    Text("We'll email you a 6-digit code.")
+                        .font(CX.body(15)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                    TextField("you@example.com", text: $email)
+                        .keyboardType(.emailAddress).textContentType(.emailAddress)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .focused($focused)
+                        .font(CX.body(17)).padding(16)
+                        .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
+                    primaryButton("Send Code", enabled: emailValid) { Task { await send() } }
+                } else {
+                    Text("Enter the code").font(CX.title(24)).foregroundStyle(CX.navy)
+                    Text("Sent to \(email)")
+                        .font(CX.body(15)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                    TextField("123456", text: $code)
+                        .keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        .focused($focused)
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .multilineTextAlignment(.center).kerning(8)
+                        .padding(16)
+                        .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
+                        .onChange(of: code) { _, v in
+                            code = String(v.filter(\.isNumber).prefix(6))
+                            if code.count == 6 { Task { await verify() } }
+                        }
+                    primaryButton("Verify", enabled: code.count == 6) { Task { await verify() } }
+                    Button("Use a different email") { stage = .email; code = ""; error = nil }
+                        .font(CX.label(14)).foregroundStyle(CX.teal)
+                }
+
+                if let error {
+                    Text(error).font(CX.label(13)).foregroundStyle(CX.orange).multilineTextAlignment(.center)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 24).padding(.vertical, 18)
+        }
+        .onAppear { focused = true }
+    }
+
+    private func primaryButton(_ title: String, enabled: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                if busy { ProgressView().tint(.white) } else { Text(title) }
+            }
+            .font(CX.heading(17)).foregroundStyle(.white)
+            .frame(maxWidth: .infinity).padding(.vertical, 16)
+            .background(enabled ? AnyShapeStyle(CX.orangeButton) : AnyShapeStyle(CX.navySoft.opacity(0.4)),
+                       in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .disabled(!enabled || busy)
+    }
+
+    private func send() async {
+        error = nil; busy = true; defer { busy = false }
+        do {
+            try await sb.sendEmailCode(email.trimmingCharacters(in: .whitespaces).lowercased())
+            stage = .code; code = ""; focused = true
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Couldn't send the code."
+        }
+    }
+
+    private func verify() async {
+        guard !busy else { return }
+        error = nil; busy = true; defer { busy = false }
+        do {
+            let mail = try await sb.verifyEmailCode(email.trimmingCharacters(in: .whitespaces).lowercased(), code: code)
+            await app.bindAccount()
+            if let mail, !mail.isEmpty, app.displayName == "Dr. Vix Trainee" {
+                app.displayName = mail.components(separatedBy: "@").first.map { "Dr. " + $0.capitalized } ?? app.displayName
+            }
+            dismiss()
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "That code didn't work."
+            code = ""
+        }
+    }
+}
+
 // MARK: - 3. Country
 private struct CountryScreen: View {
     var onDone: () -> Void
     @EnvironmentObject var app: AppState
-    @State private var selected = "India"
-    private let countries = [("India","🇮🇳"),("United States","🇺🇸"),("United Kingdom","🇬🇧"),
-                             ("Canada","🇨🇦"),("Australia","🇦🇺"),("Germany","🇩🇪"),("Nigeria","🇳🇬")]
+    @State private var search = ""
+    @State private var selected: String
+
+    init(onDone: @escaping () -> Void) {
+        self.onDone = onDone
+        // Default to the device's region, else United States.
+        let code = Locale.current.region?.identifier
+        let name = code.flatMap { Locale(identifier: "en_US").localizedString(forRegionCode: $0) }
+        _selected = State(initialValue: name ?? "United States")
+    }
+
+    /// Every ISO country, with its flag, sorted by name (built once).
+    private static let all: [(name: String, flag: String)] = {
+        let en = Locale(identifier: "en_US")
+        return Locale.Region.isoRegions
+            .map(\.identifier).filter { $0.count == 2 }
+            .compactMap { code -> (String, String)? in
+                guard let name = en.localizedString(forRegionCode: code) else { return nil }
+                return (name, flag(code))
+            }
+            .sorted { $0.0 < $1.0 }
+    }()
+
+    /// Turn a 2-letter ISO code into its flag emoji (regional indicators).
+    private static func flag(_ code: String) -> String {
+        code.uppercased().unicodeScalars
+            .compactMap { UnicodeScalar(127397 + $0.value).map(String.init) }
+            .joined()
+    }
+
+    private var filtered: [(name: String, flag: String)] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty ? Self.all : Self.all.filter { $0.name.lowercased().contains(q) }
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             VStack(spacing: 8) {
                 Text("Your medical journey starts here").font(CX.title(26))
                     .foregroundStyle(CX.navy).multilineTextAlignment(.center)
@@ -188,22 +349,39 @@ private struct CountryScreen: View {
                     .font(CX.body(15)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
             }
             .padding(.top, 20)
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(CX.navySoft)
+                TextField("Search countries", text: $search)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .font(CX.body(16))
+                if !search.isEmpty {
+                    Button { search = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(CX.navySoft)
+                    }
+                }
+            }
+            .padding(12)
+            .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
+
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 12) {
-                    ForEach(countries, id: \.0) { c in
-                        Button { selected = c.0 } label: {
+                LazyVStack(spacing: 10) {
+                    ForEach(filtered, id: \.name) { c in
+                        Button { selected = c.name } label: {
                             HStack(spacing: 12) {
-                                Text(c.1).font(.system(size: 26))
-                                Text(c.0).font(CX.body(17)).foregroundStyle(CX.navy)
+                                Text(c.flag).font(.system(size: 26))
+                                Text(c.name).font(CX.body(17)).foregroundStyle(CX.navy)
+                                    .multilineTextAlignment(.leading)
                                 Spacer()
-                                Image(systemName: selected == c.0 ? "checkmark.circle.fill" : "circle")
+                                Image(systemName: selected == c.name ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 22))
-                                    .foregroundStyle(selected == c.0 ? CX.orange : CX.hairline)
+                                    .foregroundStyle(selected == c.name ? CX.orange : CX.hairline)
                             }
                             .padding(16)
                             .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(selected == c.0 ? CX.orange : CX.hairline, lineWidth: 1.5))
+                                .stroke(selected == c.name ? CX.orange : CX.hairline, lineWidth: 1.5))
                         }
                     }
                 }
