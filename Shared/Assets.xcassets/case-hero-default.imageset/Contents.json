@@ -1,0 +1,6 @@
+{
+  "images" : [
+    { "filename" : "case-hero-default.jpg", "idiom" : "universal" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

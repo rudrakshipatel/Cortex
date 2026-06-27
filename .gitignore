@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# Python (scripts/)
+scripts/.venv/
+__pycache__/
+*.pyc
+
+# Secrets / keys — never commit these
+*.p8
+*.p12
+*.mobileprovision
+*secret*.txt
+.env
+.env.*
