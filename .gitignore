@@ -29,3 +29,6 @@ __pycache__/
 .claude/
 .vscode/
 .idea/
+
+# Duplicate source media (app uses Cortex/Animations/)
+Dr Vix animations/
