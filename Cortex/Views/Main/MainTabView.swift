@@ -232,26 +232,43 @@ struct GoProSheet: View {
         .opacity(store.plans.isEmpty ? 0.5 : 1)
     }
 
+    private var cancelled: Bool { store.isPro && !store.proWillRenew }
+
     private var proActiveCard: some View {
         VStack(spacing: 14) {
-            CXCard(borderColor: CX.teal) {
+            CXCard(borderColor: cancelled ? CX.orange : CX.teal) {
                 VStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal.fill").font(.system(size: 34)).foregroundStyle(CX.teal)
-                    Text("You're Pro! 🎉").font(CX.heading(20)).foregroundStyle(CX.navy)
-                    Text("All advanced cases and mentor reasoning are unlocked.")
-                        .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                    Image(systemName: cancelled ? "clock.badge.xmark.fill" : "checkmark.seal.fill")
+                        .font(.system(size: 34)).foregroundStyle(cancelled ? CX.orange : CX.teal)
+                    Text(cancelled ? "Subscription cancelled" : "You're Pro! 🎉")
+                        .font(CX.heading(20)).foregroundStyle(CX.navy)
+                    if cancelled {
+                        Text("It won't renew. You keep Pro\(expiryClause).")
+                            .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                    } else {
+                        Text("All advanced cases and mentor reasoning are unlocked.")
+                            .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                    }
                 }.frame(maxWidth: .infinity).padding(.vertical, 6)
             }
             Button { manageSubscriptions() } label: {
-                Text("Manage or Cancel Subscription")
+                Text(cancelled ? "Manage Subscription" : "Manage or Cancel Subscription")
                     .font(CX.heading(16)).foregroundStyle(CX.navy)
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
             }.buttonStyle(PressStyle())
-            Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
-                .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+            if !cancelled {
+                Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
+                    .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+            }
         }
+    }
+
+    /// " until 27 Jun" when we know the expiry, else "" (Pro keeps until the period ends).
+    private var expiryClause: String {
+        guard let exp = store.proExpiration else { return " until the current period ends" }
+        return " until \(exp.formatted(date: .abbreviated, time: .omitted))"
     }
 
     /// Open Apple's native Manage Subscriptions sheet (the only sanctioned way to
@@ -265,7 +282,10 @@ struct GoProSheet: View {
             }
             return
         }
-        Task { try? await AppStore.showManageSubscriptions(in: scene) }
+        Task {
+            try? await AppStore.showManageSubscriptions(in: scene)
+            await store.refreshEntitlement()   // reflect a just-made cancellation
+        }
     }
 
     private func proRow(_ t: String) -> some View {

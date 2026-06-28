@@ -22,6 +22,11 @@ struct ProPlan: Identifiable {
 final class StoreManager: ObservableObject {
     @Published private(set) var plans: [ProPlan] = []
     @Published private(set) var isPro = false
+    /// Whether the active subscription will auto-renew. False once the user has
+    /// cancelled (they keep Pro until `proExpiration`).
+    @Published private(set) var proWillRenew = false
+    /// When the current Pro period ends.
+    @Published private(set) var proExpiration: Date?
     @Published private(set) var purchasingID: String?
     @Published private(set) var loadFailed = false
 
@@ -101,7 +106,10 @@ final class StoreManager: ObservableObject {
     // MARK: Helpers
 
     private func apply(_ info: CustomerInfo) {
-        isPro = info.entitlements[RevenueCatConfig.entitlementID]?.isActive == true
+        let ent = info.entitlements[RevenueCatConfig.entitlementID]
+        isPro = ent?.isActive == true
+        proWillRenew = ent?.willRenew ?? false
+        proExpiration = ent?.expirationDate
     }
 
     /// React to entitlement changes (renewals, expirations, cross-device restores).
