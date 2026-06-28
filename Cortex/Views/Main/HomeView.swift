@@ -11,6 +11,7 @@ struct HomeView: View {
     @State private var showNoLife = false
     /// Drives live re-evaluation of the emergency window (opens/closes on time).
     @State private var now = Date()
+    @State private var lastEmergencyPoll = Date.distantPast
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
     enum CaseKind { case daily, random, emergency }
@@ -62,7 +63,19 @@ struct HomeView: View {
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
             Text("Energy regenerates over time, refilling to \(AppState.maxLife) in about a day. Daily and Emergency cases are always free.")
         }
-        .onReceive(ticker) { now = $0 }
+        .onReceive(ticker) { t in
+            now = t
+            // Poll for newly-broadcast emergencies (~every 45s) so a live one
+            // appears while Home is open, without needing to relaunch.
+            if t.timeIntervalSince(lastEmergencyPoll) > 45 {
+                lastEmergencyPoll = t
+                Task {
+                    let ems = await SupabaseService.shared.fetchActiveEmergencies()
+                    store.setServerEmergencies(ems)
+                    NotificationManager.shared.syncEmergencyNotifications(ems)
+                }
+            }
+        }
         .onAppear { now = Date(); app.refreshForNewDay(); ensureRandom() }
     }
 

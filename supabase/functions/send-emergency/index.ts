@@ -65,8 +65,8 @@ Deno.serve(async () => {
         const tokens = withTz.filter((d) => d.timezone === tz).map((d) => d.apns_token as string);
         for (const t of tokens) {
           const status = await sendPush(t, jwt, bundleId, sandbox, {
-            title: "🚨 Emergency — you're on call",
-            body: "There's an emergency and you're the only doctor available on site. Tap to respond.",
+            title: "🚨 Emergency — you're on duty",
+            body: "There's an emergency and you're the only doctor on duty. Save the patient — tap to respond.",
             emergencyId: e.id as string,
           });
           if (status === 200) delivered++;

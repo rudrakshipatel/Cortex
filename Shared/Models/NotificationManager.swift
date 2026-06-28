@@ -29,8 +29,8 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     private func emergencyContent() -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = "🚨 Emergency — you're on call"
-        content.body = "There's an emergency and you're the only doctor available on site. Tap to respond."
+        content.title = "🚨 Emergency — you're on duty"
+        content.body = "There's an emergency and you're the only doctor on duty. Save the patient — tap to respond."
         // Ambulance-siren sound. Add an audio file named `siren.caf` (≤30s) to the
         // Cortex app target for this to play; otherwise iOS uses the default sound.
         content.sound = Self.sirenSound

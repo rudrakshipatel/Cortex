@@ -8,6 +8,8 @@ struct AdminDashboard: View {
     @EnvironmentObject var sb: SupabaseService
     @Environment(\.dismiss) private var dismiss
     @State private var showTestAlert = false
+    @State private var testAlertMsg = ""
+    @State private var broadcasting = false
 
     private var cloudFooter: String {
         guard sb.isConfigured else { return "Connect a backend to broadcast to all users." }
@@ -36,19 +38,19 @@ struct AdminDashboard: View {
 
                 Section {
                     createLink("Emergency case", "cross.case.fill", .red) { EmergencyForm() }
-                    Button {
-                        store.scheduleEmergency(case: Seed.demoEmergency, at: Date())
-                        showTestAlert = true
-                    } label: {
-                        Label("Trigger test emergency now", systemImage: "bolt.heart.fill")
-                            .foregroundStyle(.red)
-                    }
+                    Button { broadcastLiveNow() } label: {
+                        HStack {
+                            Label("Broadcast live emergency now", systemImage: "bolt.heart.fill")
+                                .foregroundStyle(.red)
+                            if broadcasting { Spacer(); ProgressView() }
+                        }
+                    }.disabled(broadcasting)
                 } header: {
                     Text("Push")
                 } footer: {
-                    Text(store.emergencies.isEmpty
-                         ? "Schedule a 🚨 emergency case, or trigger a live test one on the Home tab right now."
-                         : "\(store.emergencies.count) emergency case(s) on this device.")
+                    Text(sb.isAdminSignedIn
+                         ? "Broadcasts a 🚨 emergency to ALL signed-in players right now (live for 3 hours)."
+                         : "Sign in under Cloud sync first — that's how emergencies reach players.")
                 }
 
                 Section {
@@ -98,10 +100,30 @@ struct AdminDashboard: View {
             }
         }
         .tint(CX.orange)
-        .alert("Test emergency live", isPresented: $showTestAlert) {
-            Button("OK") { dismiss() }
+        .alert("Emergency", isPresented: $showTestAlert) {
+            Button("OK") {}
         } message: {
-            Text("Close the Admin Console and open the Home tab — the emergency is active now for 3 hours.")
+            Text(testAlertMsg)
+        }
+    }
+
+    /// Broadcast a demo emergency to ALL players, live right now (3-hour window).
+    private func broadcastLiveNow() {
+        guard sb.isConfigured, sb.isAdminSignedIn else {
+            testAlertMsg = "Sign in under Cloud sync first — that's how the emergency reaches players."
+            showTestAlert = true
+            return
+        }
+        broadcasting = true
+        Task {
+            defer { broadcasting = false }
+            do {
+                try await sb.broadcastEmergency(case: Seed.demoEmergency, on: Date())
+                testAlertMsg = "🚨 Live! Every signed-in player gets the alert (and the Home card) within about a minute, or the moment they next open the app. Active for 3 hours."
+            } catch {
+                testAlertMsg = "Couldn't broadcast: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+            }
+            showTestAlert = true
         }
     }
 
