@@ -39,7 +39,7 @@ struct MainTabView: View {
     }
 }
 
-// MARK: - Shared top bar (Energy / Coins / XP / GO PRO)
+// MARK: - Shared top bar (Energy / Coins / Streak / GO PRO)
 struct TopBar: View {
     @EnvironmentObject var app: AppState
     @State private var showPro = false
@@ -47,21 +47,20 @@ struct TopBar: View {
     /// Ticks energy regeneration while the app is open.
     private let energyTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             EnergyBar(value: app.life, max: AppState.maxLife, showsLabel: false)
             resource("dollarsign.circle.fill", "\(app.coins)", CX.gold)
-            resource("bolt.circle.fill", "\(app.lifetimeXP)", CX.teal)
-            Spacer()
+            Spacer(minLength: 8)
             Button { showStreak = true } label: {
                 resource("flame.fill", "\(app.streak)", .orange)
             }
             Button { showPro = true } label: {
                 Text("GO PRO").font(CX.label(14)).foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(CX.tealButton, in: Capsule())
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, 10)
         .sheet(isPresented: $showPro) { GoProSheet() }
         .sheet(isPresented: $showStreak) { StreakView() }
         .onAppear { app.refreshForNewDay() }
@@ -72,6 +71,7 @@ struct TopBar: View {
         HStack(spacing: 5) {
             Image(systemName: icon).foregroundStyle(color)
             Text(value).font(CX.label(14)).foregroundStyle(CX.navy)
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 11).padding(.vertical, 8)
         .background(.white, in: Capsule())
