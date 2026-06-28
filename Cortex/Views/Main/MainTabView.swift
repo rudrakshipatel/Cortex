@@ -139,12 +139,8 @@ struct GoProSheet: View {
                     } else {
                         planPicker
                         subscribeButton
-                        HStack(spacing: 16) {
-                            Button("Restore Purchases") { Task { await restore() } }
-                            Text("·").foregroundStyle(CX.hairline)
-                            Button("Redeem a Code") { store.redeemCode() }
-                        }
-                        .font(CX.label(14)).foregroundStyle(CX.teal).disabled(working)
+                        Button("Restore Purchases") { Task { await restore() } }
+                            .font(CX.label(14)).foregroundStyle(CX.teal).disabled(working)
                         Text("Auto-renewable subscription. Cancel anytime in Settings. Payment is charged to your Apple ID.")
                             .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                     }
