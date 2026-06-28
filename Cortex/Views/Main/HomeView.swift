@@ -61,7 +61,7 @@ struct HomeView: View {
             })
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro to play unlimited — Daily and Emergency cases are always free.")
+            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost). Daily and Emergency cases are always free.")
         }
         .onReceive(ticker) { t in
             now = t
@@ -209,7 +209,7 @@ struct PracticeView: View {
         }
         .fullScreenCover(item: $active) { c in CaseFlow(clinicalCase: c) }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro to play unlimited.")
+            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost).")
         }
         .onAppear { app.refreshForNewDay() }
     }
@@ -368,7 +368,7 @@ struct LeaguesView: View {
             CaseFlow(clinicalCase: c, consumesLife: true)
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro to play unlimited.")
+            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost).")
         }
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
         .alert("Promoted! 🎉", isPresented: Binding(get: { promotion != nil }, set: { if !$0 { promotion = nil } })) {

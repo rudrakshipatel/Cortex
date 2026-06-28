@@ -127,7 +127,7 @@ struct GoProSheet: View {
                     CXCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Cortex Pro unlocks:").font(CX.heading(17)).foregroundStyle(CX.teal)
-                            proRow("Unlimited cases — no energy limit")
+                            proRow("Cases cost far less energy (12 vs 50)")
                             proRow("Advanced & senior-level cases")
                             proRow("High-complexity, multi-morbidity patients")
                             proRow("Full mentor reasoning on every case")

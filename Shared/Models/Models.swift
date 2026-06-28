@@ -450,9 +450,10 @@ final class AppState: ObservableObject {
     }
 
     /// Energy a random/practice case costs to play. Free players pay a flat 50
-    /// (so they can play ~2 per full bar); Pro players play unlimited (0).
+    /// (~2 per full bar); Pro players pay only 12 (~8 per full bar).
     static let randomCaseEnergyCost = 50
-    var randomCaseCost: Int { isPro ? 0 : Self.randomCaseEnergyCost }
+    static let proCaseEnergyCost = 12
+    var randomCaseCost: Int { isPro ? Self.proCaseEnergyCost : Self.randomCaseEnergyCost }
 
     func canAfford(life cost: Int) -> Bool { life >= cost }
     /// Spend energy after a case, never dropping below zero. Banks any pending
