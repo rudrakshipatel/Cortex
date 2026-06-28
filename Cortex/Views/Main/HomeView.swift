@@ -744,19 +744,20 @@ struct MeView: View {
     }
 
     private var trophiesCard: some View {
-        CXCard {
+        let m = app.masteryCounts
+        return CXCard {
             VStack(spacing: 14) {
                 HStack {
-                    Text("Trophies").font(CX.heading(20)).foregroundStyle(CX.navy)
+                    Text("Specialty Trophies").font(CX.heading(20)).foregroundStyle(CX.navy)
                     Spacer()
                     Button { showTrophies = true } label: {
                         Text("DETAILS ›").font(CX.label(13)).foregroundStyle(CX.teal)
                     }
                 }
                 HStack(spacing: 12) {
-                    trophyBox("\(app.gold)", "GOLD", CX.gold)
-                    trophyBox("\(app.silver)", "SILVER", CX.teal)
-                    trophyBox("\(app.bronze)", "BRONZE", Color(hex: 0xCD8B5A))
+                    trophyBox("\(m.gold)", "GOLD", CX.gold)
+                    trophyBox("\(m.silver)", "SILVER", CX.teal)
+                    trophyBox("\(m.bronze)", "BRONZE", Color(hex: 0xCD8B5A))
                 }
             }
         }
@@ -875,17 +876,20 @@ struct TrophyDetailSheet: View {
     @EnvironmentObject var app: AppState
     @Environment(\.dismiss) private var dismiss
 
-    private var tiers: [(name: String, count: Int, color: Color, blurb: String)] {
-        [("Gold Trophy",   app.gold,   CX.gold,                "Solve a case with a flawless workup."),
-         ("Silver Trophy", app.silver, CX.teal,                "Solve a case with a strong workup."),
-         ("Bronze Trophy", app.bronze, Color(hex: 0xCD8B5A),   "Reach the right diagnosis.")]
+    private static let bronzeColor = Color(hex: 0xCD8B5A)
+    private func tierColor(_ tier: Int) -> Color {
+        switch tier { case 3: return CX.gold; case 2: return CX.teal; case 1: return Self.bronzeColor
+        default: return CX.navySoft }
+    }
+    private func tierName(_ tier: Int) -> String {
+        switch tier { case 3: return "Gold"; case 2: return "Silver"; case 1: return "Bronze"; default: return "—" }
     }
 
     var body: some View {
         AppBackground {
             VStack(spacing: 0) {
                 HStack {
-                    Text("Trophies").font(CX.title(24)).foregroundStyle(CX.navy)
+                    Text("Specialty Trophies").font(CX.title(24)).foregroundStyle(CX.navy)
                     Spacer()
                     Button { dismiss() } label: {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 26)).foregroundStyle(CX.navySoft)
@@ -894,27 +898,24 @@ struct TrophyDetailSheet: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 16) {
-                        ForEach(tiers, id: \.name) { tier in
-                            CXCard {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    HStack(spacing: 12) {
-                                        ZStack {
-                                            Circle().fill(tier.color.opacity(0.16)).frame(width: 54, height: 54)
-                                            Image(systemName: tier.count > 0 ? "trophy.fill" : "lock.fill")
-                                                .font(.system(size: 26)).foregroundStyle(tier.color)
-                                        }
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(tier.name).font(CX.heading(19)).foregroundStyle(CX.navy)
-                                            Text(tier.blurb).font(CX.body(14)).foregroundStyle(CX.navySoft)
-                                        }
-                                        Spacer()
-                                        Text("\(tier.count)").font(CX.title(28)).foregroundStyle(tier.color)
-                                    }
-                                }.frame(maxWidth: .infinity, alignment: .leading)
+                        CXCard {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Master each specialty").font(CX.heading(17)).foregroundStyle(CX.navy)
+                                ruleRow(Self.bronzeColor, "Bronze", "Solve \(AppState.bronzeMastery) cases")
+                                ruleRow(CX.teal, "Silver", "Solve \(AppState.silverMastery) cases")
+                                ruleRow(CX.gold, "Gold", "Solve \(AppState.goldMastery) cases")
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if app.specialtiesByProgress.isEmpty {
+                            Text("Solve cases to start earning specialty trophies.")
+                                .font(CX.body(14)).foregroundStyle(CX.navySoft)
+                                .multilineTextAlignment(.center).padding(.top, 10)
+                        } else {
+                            ForEach(app.specialtiesByProgress, id: \.self) { sp in
+                                specialtyRow(sp)
                             }
                         }
-                        Text("Earn coins for every trophy — see the coins page for details.")
-                            .font(CX.body(13)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                     }
                     .padding(.horizontal, 18).padding(.bottom, 28)
                 }
@@ -922,6 +923,65 @@ struct TrophyDetailSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    private func ruleRow(_ color: Color, _ name: String, _ detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "trophy.fill").foregroundStyle(color).frame(width: 22)
+            Text(name).font(CX.body(15)).foregroundStyle(CX.navy)
+            Spacer()
+            Text(detail).font(CX.label(13)).foregroundStyle(CX.navySoft)
+        }
+    }
+
+    /// Next milestone above the current solved count (nil once Gold is reached).
+    private func nextMilestone(_ solved: Int) -> Int? {
+        if solved < AppState.bronzeMastery { return AppState.bronzeMastery }
+        if solved < AppState.silverMastery { return AppState.silverMastery }
+        if solved < AppState.goldMastery   { return AppState.goldMastery }
+        return nil
+    }
+
+    private func specialtyRow(_ sp: String) -> some View {
+        let solved = app.solvedCount(in: sp)
+        let tier = app.masteryTier(sp)
+        let color = tierColor(tier)
+        let next = nextMilestone(solved)
+        return CXCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(color.opacity(0.16)).frame(width: 48, height: 48)
+                        Image(systemName: tier > 0 ? "trophy.fill" : "lock.fill")
+                            .font(.system(size: 22)).foregroundStyle(color)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(sp).font(CX.heading(17)).foregroundStyle(CX.navy)
+                        Text(tier > 0 ? "\(tierName(tier)) · \(solved) solved" : "\(solved) solved")
+                            .font(CX.body(13)).foregroundStyle(CX.navySoft)
+                    }
+                    Spacer()
+                    if tier > 0 {
+                        Text(tierName(tier).uppercased()).font(CX.label(11)).foregroundStyle(.white)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(color, in: Capsule())
+                    }
+                }
+                if let next {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.black.opacity(0.08))
+                            Capsule().fill(color).frame(width: geo.size.width * min(1, Double(solved) / Double(next)))
+                        }
+                    }.frame(height: 8)
+                    Text("\(solved) / \(next) to \(tierName(tier + 1))")
+                        .font(CX.label(12)).foregroundStyle(CX.navySoft)
+                } else {
+                    Text("Gold mastery — fully complete! 🏆")
+                        .font(CX.label(12)).foregroundStyle(CX.gold)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

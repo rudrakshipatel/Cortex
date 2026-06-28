@@ -178,7 +178,7 @@ struct CaseFlow: View {
         // below that it stays unsolved and can be replayed.
         if session.solved {
             app.recordCaseSolved(clinicalCase.id, earned: session.earnedXP, outOf: CaseSession.maxXP)
-            app.markCaseSolved(clinicalCase.id)   // excludes it from "random" forever
+            app.markCaseSolved(clinicalCase.id, specialty: clinicalCase.specialty)   // also counts toward specialty mastery
             UINotificationFeedbackGenerator().notificationOccurred(.success)   // celebratory haptic
         } else {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)

@@ -61,6 +61,10 @@ final class AppState: ObservableObject {
     @Published private(set) var solvedCaseIDs: Set<String> {
         didSet { defaults.set(Array(solvedCaseIDs), forKey: K.solvedCases) }
     }
+    /// Count of distinct cases solved per specialty — drives mastery trophies.
+    @Published private(set) var specialtySolved: [String: Int] {
+        didSet { defaults.set(specialtySolved, forKey: K.specialtySolved) }
+    }
     /// Best trophy tier earned per case (1 = bronze, 2 = silver, 3 = gold),
     /// keyed by case id — shown on that case's Practice card.
     @Published private(set) var caseTrophies: [String: Int] {
@@ -103,6 +107,7 @@ final class AppState: ObservableObject {
         static let solvedCases = "cx.solvedCases", caseTrophies = "cx.caseTrophies"
         static let freezes = "cx.streakFreezes", activeDays = "cx.activeDays", highStreak = "cx.highStreak"
         static let leagueTier = "cx.leagueTier", leagueResultWeek = "cx.leagueResultWeek"
+        static let specialtySolved = "cx.specialtySolved"
     }
 
     init() {
@@ -132,6 +137,7 @@ final class AppState: ObservableObject {
         activeDays = Set(d.array(forKey: K.activeDays) as? [Int] ?? [])
         solvedDailyDays = Set(d.array(forKey: K.solvedDaily) as? [Int] ?? [])
         solvedCaseIDs = Set(d.stringArray(forKey: K.solvedCases) ?? [])
+        specialtySolved = d.dictionary(forKey: K.specialtySolved) as? [String: Int] ?? [:]
         caseTrophies = d.dictionary(forKey: K.caseTrophies) as? [String: Int] ?? [:]
         displayName = d.string(forKey: K.name) ?? "Dr. Vix Trainee"
         casesSolved = d.object(forKey: K.casesSolved) as? Int ?? 0
@@ -171,6 +177,7 @@ final class AppState: ObservableObject {
         var activeDays: [Int] = [], lastLifeDay = 0, lastEnergyTS = 0.0
         var solvedDailyDays: [Int] = [], solvedCaseIDs: [String] = []
         var caseTrophies: [String: Int] = [:]
+        var specialtySolved: [String: Int] = [:]
         var casesSolved = 0, casesFinished = 0, weeklyXP = 0, leagueCasesThisWeek = 0
         var lastLeagueWeek = 0, gold = 0, silver = 0, bronze = 0, topThreeFinishes = 0
         var leagueTier = 0, lastLeagueResultWeek = 0
@@ -184,7 +191,8 @@ final class AppState: ObservableObject {
             streakFreezes: streakFreezes, activeDays: Array(activeDays), lastLifeDay: lastLifeDay,
             lastEnergyTS: lastEnergyDate.timeIntervalSince1970,
             solvedDailyDays: Array(solvedDailyDays), solvedCaseIDs: Array(solvedCaseIDs),
-            caseTrophies: caseTrophies, casesSolved: casesSolved, casesFinished: casesFinished,
+            caseTrophies: caseTrophies, specialtySolved: specialtySolved,
+            casesSolved: casesSolved, casesFinished: casesFinished,
             weeklyXP: weeklyXP, leagueCasesThisWeek: leagueCasesThisWeek, lastLeagueWeek: lastLeagueWeek,
             gold: gold, silver: silver, bronze: bronze, topThreeFinishes: topThreeFinishes,
             leagueTier: leagueTier, lastLeagueResultWeek: lastLeagueResultWeek)
@@ -199,7 +207,7 @@ final class AppState: ObservableObject {
         activeDays = Set(p.activeDays); lastLifeDay = p.lastLifeDay
         lastEnergyDate = p.lastEnergyTS > 0 ? Date(timeIntervalSince1970: p.lastEnergyTS) : Date()
         solvedDailyDays = Set(p.solvedDailyDays); solvedCaseIDs = Set(p.solvedCaseIDs)
-        caseTrophies = p.caseTrophies
+        caseTrophies = p.caseTrophies; specialtySolved = p.specialtySolved
         casesSolved = p.casesSolved; casesFinished = p.casesFinished
         weeklyXP = p.weeklyXP; leagueCasesThisWeek = p.leagueCasesThisWeek
         lastLeagueWeek = p.lastLeagueWeek
@@ -348,7 +356,41 @@ final class AppState: ObservableObject {
 
     // MARK: Solved cases (per-case, by id)
     func isCaseSolved(_ id: UUID) -> Bool { solvedCaseIDs.contains(id.uuidString) }
-    func markCaseSolved(_ id: UUID) { solvedCaseIDs.insert(id.uuidString) }
+    /// Mark a case solved. The first time a given case is solved, it also counts
+    /// toward that specialty's mastery trophy.
+    func markCaseSolved(_ id: UUID, specialty: String = "") {
+        let (inserted, _) = solvedCaseIDs.insert(id.uuidString)
+        let sp = specialty.trimmingCharacters(in: .whitespacesAndNewlines)
+        if inserted, !sp.isEmpty { specialtySolved[sp, default: 0] += 1 }
+    }
+
+    // MARK: Specialty mastery trophies (count of solved cases per specialty)
+    /// Solve thresholds: Bronze at 10, Silver at 60 (10+50), Gold at 160 (10+50+100).
+    static let bronzeMastery = 10, silverMastery = 60, goldMastery = 160
+
+    /// Highest mastery trophy reached in a specialty: 3 = Gold, 2 = Silver, 1 = Bronze, 0 = none.
+    func masteryTier(_ specialty: String) -> Int {
+        let n = specialtySolved[specialty] ?? 0
+        if n >= Self.goldMastery   { return 3 }
+        if n >= Self.silverMastery { return 2 }
+        if n >= Self.bronzeMastery { return 1 }
+        return 0
+    }
+    func solvedCount(in specialty: String) -> Int { specialtySolved[specialty] ?? 0 }
+
+    /// Specialties the player has made progress in, sorted by most solved.
+    var specialtiesByProgress: [String] {
+        specialtySolved.keys.sorted { (specialtySolved[$0] ?? 0) > (specialtySolved[$1] ?? 0) }
+    }
+
+    /// How many specialties sit at each mastery trophy tier (by their highest tier).
+    var masteryCounts: (gold: Int, silver: Int, bronze: Int) {
+        var g = 0, s = 0, b = 0
+        for sp in specialtySolved.keys {
+            switch masteryTier(sp) { case 3: g += 1; case 2: s += 1; case 1: b += 1; default: break }
+        }
+        return (g, s, b)
+    }
 
     /// True once the user has already completed a case today.
     var playedToday: Bool { lastActiveEpochDay == Self.gmtDay() }
