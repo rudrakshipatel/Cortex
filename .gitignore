@@ -32,3 +32,7 @@ __pycache__/
 
 # Duplicate source media (app uses Cortex/Animations/)
 Dr Vix animations/
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
