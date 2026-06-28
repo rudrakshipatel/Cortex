@@ -86,6 +86,10 @@ struct HomeView: View {
         } label: {
             CXCard {
                 VStack(alignment: .leading, spacing: 10) {
+                    Image(c.heroImageName)
+                        .resizable().scaledToFill()
+                        .frame(maxWidth: .infinity).frame(height: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     HStack {
                         Label("EMERGENCY", systemImage: "cross.case.fill")
                             .font(CX.label(13)).foregroundStyle(.red)

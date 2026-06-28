@@ -30,15 +30,15 @@ private struct IntroCarousel: View {
     var onDone: () -> Void
     @State private var page = 0
 
-    struct Slide { let title: String; let emoji: String; let bullets: [String] }
+    struct Slide { let title: String; let image: String; let bullets: [String] }
     private let slides = [
-        Slide(title: "Welcome to Cortex", emoji: "🏥",
+        Slide(title: "Welcome to Cortex", image: "case-img-11",
               bullets: ["You're the only doctor on duty today.", "Every department is waiting for your lead."]),
-        Slide(title: "Your Patients Are Waiting", emoji: "🧑‍⚕️",
+        Slide(title: "Your Patients Are Waiting", image: "case-img-1",
               bullets: ["Each specialty has a patient ready.", "Solve a case to unlock the next.", "Cases get harder as you grow."]),
-        Slide(title: "Every Decision Counts", emoji: "🩺",
+        Slide(title: "Every Decision Counts", image: "case-img-9",
               bullets: ["From history to diagnosis, reason it out.", "Dr. Vix mentors you at every step."]),
-        Slide(title: "Ready to Think?", emoji: "🧠",
+        Slide(title: "Ready to Think?", image: "case-img-5",
               bullets: ["Take charge of the Cortex ward.", "Your first patient is waiting for you."])
     ]
 
@@ -78,10 +78,10 @@ private struct IntroCarousel: View {
             VStack(spacing: 18) {
                 Text(s.title).font(CX.title(26)).foregroundStyle(CX.navy)
                     .multilineTextAlignment(.center)
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(CX.tealSoft)
-                    .frame(height: 180)
-                    .overlay(Text(s.emoji).font(.system(size: 90)))
+                Image(s.image)
+                    .resizable().scaledToFill()
+                    .frame(maxWidth: .infinity).frame(height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(s.bullets, id: \.self) { b in
                         HStack(alignment: .top, spacing: 10) {

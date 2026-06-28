@@ -636,6 +636,19 @@ extension ClinicalCase {
     /// Difficulty 1…5 (defaults to a middle 3).
     var difficultyLevel: Int { Swift.min(5, Swift.max(1, difficulty ?? 3)) }
 
+    /// Number of bundled case illustrations (case-img-1 … case-img-N).
+    static let caseImageCount = 11
+    /// The hero illustration for this case — the authored `imageName` if set,
+    /// else one of the bundled illustrations chosen deterministically from the
+    /// case content (so the same case always shows the same picture everywhere).
+    var heroImageName: String {
+        if let n = imageName?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
+        let key = specialty + "|" + patientName + "|" + chiefComplaint
+        var h: UInt64 = 1469598103934665603
+        for b in key.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+        return "case-img-\(Int(h % UInt64(Self.caseImageCount)) + 1)"
+    }
+
     /// Info arranged into the standard clinical reading order regardless
     /// of how they were authored: chief complaint → history → physical
     /// examination → anything else (kept in its original relative order).

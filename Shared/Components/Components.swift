@@ -383,10 +383,11 @@ struct CaseHeroCard: View {
     }
 
     @ViewBuilder private var heroImage: some View {
-        if let name = clinicalCase.imageName, UIImage(named: name) != nil {
+        let name = clinicalCase.heroImageName
+        if UIImage(named: name) != nil {
+            // Authored image, or a bundled illustration picked per case.
             Image(name).resizable().scaledToFill()
         } else if UIImage(named: "case-hero-default") != nil {
-            // Shared default photo (used by Daily & Random until a case sets its own).
             Image("case-hero-default").resizable().scaledToFill()
         } else {
             ZStack {
