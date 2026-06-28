@@ -365,8 +365,8 @@ final class AppState: ObservableObject {
     }
 
     // MARK: Specialty mastery trophies (count of solved cases per specialty)
-    /// Solve thresholds: Bronze at 10, Silver at 60 (10+50), Gold at 160 (10+50+100).
-    static let bronzeMastery = 10, silverMastery = 60, goldMastery = 160
+    /// Solve thresholds: Bronze at 10, Silver at 50, Gold at 100 cases.
+    static let bronzeMastery = 10, silverMastery = 50, goldMastery = 100
 
     /// Highest mastery trophy reached in a specialty: 3 = Gold, 2 = Silver, 1 = Bronze, 0 = none.
     func masteryTier(_ specialty: String) -> Int {
