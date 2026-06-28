@@ -59,6 +59,12 @@ struct AdminDashboard: View {
                     Text(cloudFooter)
                 }
 
+                Section {
+                    createLink("Manage published content", "square.and.pencil", CX.navy) { ManageContentView() }
+                } footer: {
+                    Text("Edit or delete the clinical, daily and emergency cases that are live on the server for all users.")
+                }
+
                 Section("Clinical cases · \(store.clinicalCases.count)") {
                     if store.clinicalCases.isEmpty { emptyRow("No clinical cases yet") }
                     ForEach(store.clinicalCases) { c in

@@ -486,6 +486,125 @@ final class SupabaseService: ObservableObject {
                            extraHeaders: ["Prefer": "return=minimal"])
     }
 
+    // MARK: - Admin content management (edit / delete published content)
+    //
+    // The admin signs in as a user listed in public.admins, whose JWT is granted
+    // full access to the content/emergencies tables (the "admin write … for all"
+    // RLS policies). So an admin can read the RAW rows — full payload *with* the
+    // answer key, unlike the answer-stripped get_cases() players use — and PATCH
+    // or DELETE them by id. These power the "Manage published content" screen.
+
+    /// A published clinical/daily row fetched with its server id, ready to edit.
+    struct AdminCaseRow: Identifiable {
+        let id: String            // server uuid
+        let kind: String          // "clinical" | "daily"
+        var clinicalCase: ClinicalCase
+        var date: Date?           // daily only — the GMT day it appears on
+    }
+
+    /// A published emergency row with its server id and local fire time.
+    struct AdminEmergencyRow: Identifiable {
+        let id: String
+        var clinicalCase: ClinicalCase
+        var fireDate: Date        // reconstructed from send_date + local_hour/minute
+    }
+
+    /// Fetch every published clinical & daily case (newest first), with answers.
+    func fetchPublishedCases() async throws -> [AdminCaseRow] {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        let (data, _) = try await send(method: "GET",
+            path: "rest/v1/content?select=id,kind,payload,created_at&order=created_at.desc", admin: true)
+        guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        var out: [AdminCaseRow] = []
+        for row in rows {
+            guard let id = row["id"] as? String, let kind = row["kind"] as? String,
+                  let payload = row["payload"],
+                  let pdata = try? JSONSerialization.data(withJSONObject: payload) else { continue }
+            switch kind {
+            case "clinical":
+                if let c = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("published", requireKey: false) {
+                    out.append(AdminCaseRow(id: id, kind: kind, clinicalCase: c, date: nil))
+                }
+            case "daily":
+                if let d = try? JSONDecoder().decode(DailyDTO.self, from: pdata).toModel("published", requireKey: false) {
+                    out.append(AdminCaseRow(id: id, kind: kind, clinicalCase: d.clinicalCase, date: d.date))
+                }
+            default: break   // ignore other kinds (mcq/mastery)
+            }
+        }
+        return out
+    }
+
+    /// Fetch every published emergency (newest first), with answers.
+    func fetchPublishedEmergencies() async throws -> [AdminEmergencyRow] {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        let (data, _) = try await send(method: "GET",
+            path: "rest/v1/emergencies?select=id,payload,send_date,local_hour,local_minute,created_at&order=created_at.desc",
+            admin: true)
+        guard let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = .current
+        var out: [AdminEmergencyRow] = []
+        for row in rows {
+            guard let id = row["id"] as? String,
+                  let sendDate = row["send_date"] as? String,
+                  let payload = row["payload"],
+                  let pdata = try? JSONSerialization.data(withJSONObject: payload),
+                  let c = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("published emergency", requireKey: false)
+            else { continue }
+            let parts = sendDate.split(separator: "-").compactMap { Int($0) }
+            var comps = DateComponents()
+            if parts.count == 3 { comps.year = parts[0]; comps.month = parts[1]; comps.day = parts[2] }
+            comps.hour = (row["local_hour"] as? Int) ?? 0
+            comps.minute = (row["local_minute"] as? Int) ?? 0
+            out.append(AdminEmergencyRow(id: id, clinicalCase: c, fireDate: cal.date(from: comps) ?? Date()))
+        }
+        return out
+    }
+
+    func updatePublishedClinical(id: String, case c: ClinicalCase) async throws {
+        try await patch(id: id, path: "rest/v1/content",
+                        row: OutRow(kind: "clinical", payload: CaseDTO(from: c)))
+    }
+
+    func updatePublishedDaily(id: String, case c: ClinicalCase, date: Date) async throws {
+        let f = DateFormatter(); f.timeZone = TimeZone(identifier: "GMT"); f.dateFormat = "yyyy-MM-dd"
+        try await patch(id: id, path: "rest/v1/content",
+                        row: OutRow(kind: "daily",
+                                    payload: DailyDTO(date: f.string(from: date), clinicalCase: CaseDTO(from: c))))
+    }
+
+    func updatePublishedEmergency(id: String, case c: ClinicalCase, on date: Date) async throws {
+        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        let sendDate = String(format: "%04d-%02d-%02d", comps.year ?? 0, comps.month ?? 0, comps.day ?? 0)
+        try await patch(id: id, path: "rest/v1/emergencies",
+                        row: EmergRow(payload: CaseDTO(from: c), send_date: sendDate,
+                                      local_hour: comps.hour ?? 0, local_minute: comps.minute ?? 0))
+    }
+
+    func deletePublishedCase(id: String) async throws {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        _ = try await send(method: "DELETE", path: "rest/v1/content?id=eq.\(id)", admin: true,
+                           extraHeaders: ["Prefer": "return=minimal"])
+    }
+
+    func deletePublishedEmergency(id: String) async throws {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        _ = try await send(method: "DELETE", path: "rest/v1/emergencies?id=eq.\(id)", admin: true,
+                           extraHeaders: ["Prefer": "return=minimal"])
+    }
+
+    private func patch<T: Encodable>(id: String, path: String, row: T) async throws {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        let body = try JSONEncoder().encode(row)
+        _ = try await send(method: "PATCH", path: "\(path)?id=eq.\(id)", body: body, admin: true,
+                           extraHeaders: ["Prefer": "return=minimal"])
+    }
+
     // MARK: - HTTP core
     @discardableResult
     private func send(method: String, path: String, body: Data? = nil,
