@@ -27,9 +27,10 @@ struct CortexApp: App {
                     if phase == .active {
                         app.refreshForNewDay()
                         Task {
-                            let ems = await SupabaseService.shared.fetchActiveEmergencies()
-                            store.setServerEmergencies(ems)
-                            NotificationManager.shared.syncEmergencyNotifications(ems)
+                            // Refresh the Home emergency card. The alert itself is
+                            // delivered by the server push (works when killed/closed),
+                            // so we don't fire a local notification here.
+                            store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies())
                         }
                     } else {
                         // Persist this account's progress when leaving the foreground.
@@ -46,9 +47,7 @@ struct CortexApp: App {
                     // Cold launch with a restored session → load the account's profile.
                     if SupabaseService.shared.isSignedIn { await app.bindAccount() }
                     await SupabaseService.shared.syncContent(into: store)
-                    let ems = await SupabaseService.shared.fetchActiveEmergencies()
-                    store.setServerEmergencies(ems)
-                    NotificationManager.shared.syncEmergencyNotifications(ems)
+                    store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies())
                     await SupabaseService.shared.submitScore(
                         playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP)
                 }

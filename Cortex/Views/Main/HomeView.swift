@@ -65,15 +65,12 @@ struct HomeView: View {
         }
         .onReceive(ticker) { t in
             now = t
-            // Poll for newly-broadcast emergencies (~every 45s) so a live one
-            // appears while Home is open, without needing to relaunch.
+            // Poll for newly-broadcast emergencies (~every 45s) so a live one's
+            // card appears while Home is open. The alert is delivered by the
+            // server push, so no local notification is fired here.
             if t.timeIntervalSince(lastEmergencyPoll) > 45 {
                 lastEmergencyPoll = t
-                Task {
-                    let ems = await SupabaseService.shared.fetchActiveEmergencies()
-                    store.setServerEmergencies(ems)
-                    NotificationManager.shared.syncEmergencyNotifications(ems)
-                }
+                Task { store.setServerEmergencies(await SupabaseService.shared.fetchActiveEmergencies()) }
             }
         }
         .onAppear { now = Date(); app.refreshForNewDay(); ensureRandom() }
