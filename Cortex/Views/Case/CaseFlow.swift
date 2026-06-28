@@ -143,7 +143,7 @@ struct CaseFlow: View {
             parts.append("Choose the appropriate treatments.")
             parts.append(contentsOf: c.treatments.map { $0.name + "." })
         case .outcome:
-            parts.append(session.diagnosisCorrect ? c.outcomeTitle : "Every expert starts here.")
+            parts.append(session.solved ? c.outcomeTitle : "Every expert starts here.")
             parts.append(c.outcomeBody)
         }
         if session.mentorUnlocked {
@@ -174,8 +174,9 @@ struct CaseFlow: View {
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
         if consumesLife { app.spendEnergy(AppState.energyCost(forXP: session.earnedXP)) }
-        // A case counts as "solved" only with the correct diagnosis.
-        if session.diagnosisCorrect {
+        // A case counts as "solved" only if the attempt scored ≥ 25 XP;
+        // below that it stays unsolved and can be replayed.
+        if session.solved {
             app.recordCaseSolved(clinicalCase.id, earned: session.earnedXP, outOf: CaseSession.maxXP)
             app.markCaseSolved(clinicalCase.id)   // excludes it from "random" forever
             UINotificationFeedbackGenerator().notificationOccurred(.success)   // celebratory haptic
@@ -184,7 +185,7 @@ struct CaseFlow: View {
         }
         app.recordCaseFinished()         // counts toward league qualification
         app.registerDailyActivity()      // advance / reset the day streak
-        onFinish?(session.diagnosisCorrect)
+        onFinish?(session.solved)
     }
 
     /// "Continue" on the outcome — result is already recorded; show the celebration.
@@ -613,7 +614,10 @@ private struct OutcomeStep: View {
     @State private var confirmMentor = false
     @State private var signingIn = false
 
-    private var correct: Bool { session.diagnosisCorrect }
+    /// Overall verdict for the SOLVED badge + celebratory narrative: the attempt
+    /// solved the case (scored ≥ 25 XP). Diagnosis-specific displays elsewhere
+    /// still use `session.diagnosisCorrect`.
+    private var correct: Bool { session.solved }
 
     /// Mapped (icon, color, title, body) learning sections from the case's
     /// structured mentor insight, in the video's display order.

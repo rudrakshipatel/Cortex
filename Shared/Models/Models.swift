@@ -698,7 +698,13 @@ final class CaseSession: ObservableObject {
     /// XP for this attempt — out of a fixed 100. The full 100 is awarded only
     /// for a completely correct solve (perfect workup quality).
     static let maxXP = 100
+    /// Minimum XP for an attempt to count the case as "solved" (and stop it
+    /// reappearing). Below this it stays unsolved.
+    static let solvedXP = 25
     var earnedXP: Int { serverXP ?? Int((performance * Double(Self.maxXP)).rounded()) }
+
+    /// Whether this attempt solves the case — scored at least `solvedXP`.
+    var solved: Bool { earnedXP >= Self.solvedXP }
 
     /// Coins for this attempt — scale with the case's own reward value.
     var earnedCoins: Int { serverCoins ?? Int((performance * Double(clinicalCase.xpReward)).rounded()) }
