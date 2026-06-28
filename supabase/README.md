@@ -30,9 +30,9 @@ These need your own accounts and **cannot** be done from code:
 ## 1. Create the Supabase project
 
 1. Create a project at supabase.com.
-2. SQL Editor → run **`schema.sql`**.
+2. SQL Editor → run **`setup_all.sql`** (the complete schema in one file).
 3. Settings → API → copy the **Project URL** and **anon** key into
-   `Cortex/Backend/SupabaseConfig.swift`, then rebuild the app.
+   `Shared/Backend/SupabaseConfig.swift`, then rebuild the app.
 
 ## 2. Create the admin user
 

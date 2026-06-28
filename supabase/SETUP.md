@@ -8,26 +8,21 @@ Everything needed to stand up (or update) the Cortex backend, in order. Secrets
 
 ## 1. Database — run the SQL
 
-**Easiest:** run the single bundle **[`setup_all.sql`](setup_all.sql)** in the
-Supabase SQL editor. It's idempotent (safe to re-run after app updates) and
-includes everything below in the right order.
+Run the single bundle **[`setup_all.sql`](setup_all.sql)** in the Supabase SQL
+editor. It's idempotent (safe to re-run after app updates) and builds the whole
+schema in the correct order:
 
-Or run the individual files **in this order**:
+| Part | What it adds |
+|------|--------------|
+| Core tables | `devices`, `content`, `emergencies`, `admins`, RLS, `register_device` |
+| Daily cases | lets you publish **daily** cases |
+| Leaderboard | global leaderboard (`submit_score`, `get_leaderboard`) |
+| Server grading | answer-stripped feeds (`get_cases`/`get_emergencies`) + `grade_case`; **locks `content`/`emergencies` to anon** |
+| Profiles | per-account cloud-synced game state (XP, coins, streak…) |
+| Leagues | real weekly leagues, rooms of ≤30 (`report_league`, `get_league`) |
 
-| # | File | What it adds |
-|---|------|--------------|
-| 1 | [`schema.sql`](schema.sql) | Core tables (`devices`, `content`, `emergencies`, `admins`), RLS, `register_device` |
-| 2 | [`daily_kind.sql`](daily_kind.sql) | Lets you publish **daily** cases |
-| 3 | [`leaderboard.sql`](leaderboard.sql) | Global leaderboard (`submit_score`, `get_leaderboard`) |
-| 4 | [`server_grading.sql`](server_grading.sql) | Answer-stripped feeds (`get_cases`/`get_emergencies`) + server grading (`grade_case`); **locks `content`/`emergencies` to anon** |
-| 5 | [`profiles.sql`](profiles.sql) | Per-account cloud-synced game state (XP, coins, streak…) |
-| 6 | [`leagues.sql`](leagues.sql) | Real weekly leagues, rooms of ≤30 (`report_league`, `get_league`) |
-
-> ⚠️ Order matters: `server_grading.sql` removes the anon read policies, so it
-> must run **after** `schema.sql`.
-
-After running, the app can: sync stripped questions, grade on the server, save
-per-account progress, and run real leagues.
+After running, the app can: sign in, sync stripped questions, grade on the
+server, save per-account progress, and run real leagues.
 
 ---
 
