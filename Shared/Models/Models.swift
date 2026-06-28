@@ -84,6 +84,13 @@ final class AppState: ObservableObject {
     /// Top-3 league finishes (shown as a profile stat).
     @Published private(set) var topThreeFinishes: Int { didSet { defaults.set(topThreeFinishes, forKey: K.topThree) } }
 
+    /// Current league tier (0 = Bronze … 9 = Diamond). Rises on a promotion-zone finish.
+    @Published private(set) var leagueTier: Int { didSet { defaults.set(leagueTier, forKey: K.leagueTier) } }
+    /// The latest GMT week whose league result we've already applied (promotion + rewards).
+    @Published private(set) var lastLeagueResultWeek: Int { didSet { defaults.set(lastLeagueResultWeek, forKey: K.leagueResultWeek) } }
+    /// The player's current league tier.
+    var league: League { League(rawValue: Swift.min(Swift.max(leagueTier, 0), League.allCases.count - 1)) ?? .bronze }
+
     private let defaults = UserDefaults.standard
     private enum K {
         static let xp = "cx.lifetimeXP", coins = "cx.coins", life = "cx.life", lifeDay = "cx.lifeDay"
@@ -95,6 +102,7 @@ final class AppState: ObservableObject {
         static let solvedDaily = "cx.solvedDaily", playerId = "cx.playerId", name = "cx.name"
         static let solvedCases = "cx.solvedCases", caseTrophies = "cx.caseTrophies"
         static let freezes = "cx.streakFreezes", activeDays = "cx.activeDays", highStreak = "cx.highStreak"
+        static let leagueTier = "cx.leagueTier", leagueResultWeek = "cx.leagueResultWeek"
     }
 
     init() {
@@ -136,6 +144,8 @@ final class AppState: ObservableObject {
         bronze = d.object(forKey: K.bronze) as? Int ?? 0
         topThreeFinishes = d.object(forKey: K.topThree) as? Int ?? 0
         country = d.string(forKey: K.country) ?? ""
+        leagueTier = d.object(forKey: K.leagueTier) as? Int ?? 0          // start in Bronze
+        lastLeagueResultWeek = d.object(forKey: K.leagueResultWeek) as? Int ?? Self.gmtWeek()
         refreshForNewDay()
 
         // Autosave: 2s after the last change, push the profile to the cloud (only
@@ -163,6 +173,7 @@ final class AppState: ObservableObject {
         var caseTrophies: [String: Int] = [:]
         var casesSolved = 0, casesFinished = 0, weeklyXP = 0, leagueCasesThisWeek = 0
         var lastLeagueWeek = 0, gold = 0, silver = 0, bronze = 0, topThreeFinishes = 0
+        var leagueTier = 0, lastLeagueResultWeek = 0
     }
 
     func exportProfile() -> ProfileState {
@@ -175,7 +186,8 @@ final class AppState: ObservableObject {
             solvedDailyDays: Array(solvedDailyDays), solvedCaseIDs: Array(solvedCaseIDs),
             caseTrophies: caseTrophies, casesSolved: casesSolved, casesFinished: casesFinished,
             weeklyXP: weeklyXP, leagueCasesThisWeek: leagueCasesThisWeek, lastLeagueWeek: lastLeagueWeek,
-            gold: gold, silver: silver, bronze: bronze, topThreeFinishes: topThreeFinishes)
+            gold: gold, silver: silver, bronze: bronze, topThreeFinishes: topThreeFinishes,
+            leagueTier: leagueTier, lastLeagueResultWeek: lastLeagueResultWeek)
     }
 
     func applyProfile(_ p: ProfileState) {
@@ -192,6 +204,8 @@ final class AppState: ObservableObject {
         weeklyXP = p.weeklyXP; leagueCasesThisWeek = p.leagueCasesThisWeek
         lastLeagueWeek = p.lastLeagueWeek
         gold = p.gold; silver = p.silver; bronze = p.bronze; topThreeFinishes = p.topThreeFinishes
+        leagueTier = p.leagueTier
+        lastLeagueResultWeek = Swift.max(lastLeagueResultWeek, p.lastLeagueResultWeek)
         refreshForNewDay()
     }
 
@@ -243,6 +257,28 @@ final class AppState: ObservableObject {
         guard SupabaseService.shared.isSignedIn,
               let data = try? JSONEncoder().encode(exportProfile()) else { return }
         await SupabaseService.shared.saveProfile(data)
+    }
+
+    // MARK: - League promotion
+
+    /// Apply last week's league finish: if the player landed in the promotion
+    /// zone (top 10), promote them one tier (capped at Diamond) and award coins +
+    /// XP scaled by rank and the new league. Returns the reward to celebrate, or
+    /// nil if they didn't promote. Caller passes the player's final rank.
+    func applyLeagueResult(rank: Int) -> LeagueReward? {
+        guard rank >= 1, rank <= Seed.leaguePromotionCount else { return nil }
+        let from = league
+        if let next = from.next { leagueTier = next.rawValue }   // promote (Diamond stays)
+        if rank <= 3 { topThreeFinishes += 1 }
+        let reward = LeagueReward(rank: rank, league: league)
+        coins += reward.coins
+        lifetimeXP += reward.xp
+        return reward
+    }
+
+    /// Mark that we've processed league results up to (and including) `week`.
+    func markLeagueResultProcessed(week: Int) {
+        if week > lastLeagueResultWeek { lastLeagueResultWeek = week }
     }
 
     /// Whole days since the Unix epoch in **GMT** (all daily resets are at GMT 00:00).
@@ -465,19 +501,6 @@ struct Department: Identifiable {
     var gold: Int = 0
     /// The curated mystery case opened from this department card.
     let caseRef: ClinicalCase
-}
-
-/// A league rank tier shown in the Leagues tab. A player's tier is the highest
-/// one whose `unlockXP` their lifetime XP has reached. Medical Student (1) →
-/// Chief (6).
-struct League: Identifiable {
-    let id = UUID()
-    let name: String
-    let subtitle: String
-    let icon: String
-    let color: Color
-    let difficulty: Int      // 1 = lowest … 6 = highest
-    let unlockXP: Int        // lifetime XP required to reach this tier
 }
 
 /// A skill-rank title derived from the player's level (every 10 levels = next

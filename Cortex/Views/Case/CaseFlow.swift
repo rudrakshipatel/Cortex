@@ -986,7 +986,7 @@ private struct CaseRewardCover: View {
     private func loadLeague() async {
         let week = AppState.gmtWeek()
         await SupabaseService.shared.reportLeague(
-            week: week, kind: app.skill.name, weeklyXP: app.weeklyXP,
+            week: week, kind: app.league.name, weeklyXP: app.weeklyXP,
             totalXP: app.lifetimeXP, trophies: app.gold, username: app.displayName)
         let members = await SupabaseService.shared.fetchLeague(week: week)
         board = Seed.leagueEntries(from: members, youId: SupabaseService.shared.userId)

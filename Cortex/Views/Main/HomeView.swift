@@ -308,20 +308,23 @@ struct LeaguesView: View {
     @State private var randomCase: ClinicalCase?
     @State private var showLearnMore = false
 
-    private var tierColor: Color { app.skill.color }
+    private var tierColor: Color { app.league.color }
 
     /// The real players in the user's weekly league room (≤30), loaded from the
     /// server and ranked by XP earned this week.
     @State private var board: [LeagueEntry] = []
     @State private var loadingLeague = false
+    @State private var promotion: LeagueReward?
     private var myEntry: LeagueEntry? { board.first { $0.isYou } }
 
-    /// Join/refresh the user's league room and pull its real members.
+    /// Promote based on last week's finish (if the week rolled over), then join /
+    /// refresh this week's league room and pull its real members.
     private func refreshLeague() async {
+        await processLeagueRollover()
         let week = AppState.gmtWeek()
         if app.qualifiedForLeague {
             await SupabaseService.shared.reportLeague(
-                week: week, kind: app.skill.name, weeklyXP: app.weeklyXP,
+                week: week, kind: app.league.name, weeklyXP: app.weeklyXP,
                 totalXP: app.lifetimeXP, trophies: app.gold, username: app.displayName)
         }
         let members = await SupabaseService.shared.fetchLeague(week: week)
@@ -329,10 +332,25 @@ struct LeaguesView: View {
         loadingLeague = false
     }
 
+    /// On the first visit of a new league week, look up last week's final rank;
+    /// if the player finished in the promotion zone, promote them a tier and
+    /// award rank-/tier-scaled coins + XP.
+    private func processLeagueRollover() async {
+        let week = AppState.gmtWeek()
+        guard week > app.lastLeagueResultWeek else { return }
+        let prevWeek = week - 1
+        let members = await SupabaseService.shared.fetchLeague(week: prevWeek)
+        if let me = members.first(where: { $0.player_id == SupabaseService.shared.userId }),
+           let reward = app.applyLeagueResult(rank: me.rank) {
+            promotion = reward
+        }
+        app.markLeagueResultProcessed(week: week)
+    }
+
     var body: some View {
         ZStack {
             CX.appBackground.ignoresSafeArea()
-            tierColor.opacity(0.14).ignoresSafeArea()      // tier wash (pink for Medical Student, etc.)
+            tierColor.opacity(0.14).ignoresSafeArea()      // league-tier colour wash
             VStack(spacing: 0) {
                 TopBar()
                 if app.qualifiedForLeague { qualifiedBody } else { notQualifiedBody }
@@ -342,6 +360,13 @@ struct LeaguesView: View {
             CaseFlow(clinicalCase: c, consumesLife: true)
         }
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
+        .alert("Promoted! 🎉", isPresented: Binding(get: { promotion != nil }, set: { if !$0 { promotion = nil } })) {
+            Button("Awesome") { promotion = nil }
+        } message: {
+            if let r = promotion {
+                Text("You finished #\(r.rank) and moved up to the \(r.league.name) League.\n\n+\(r.coins) coins · +\(r.xp) XP")
+            }
+        }
         .onAppear { app.refreshForNewDay(); ensureRandom(); loadingLeague = board.isEmpty }
         .task {
             await SupabaseService.shared.submitScore(
@@ -357,8 +382,8 @@ struct LeaguesView: View {
         return ScrollView(showsIndicators: false) {
             VStack(spacing: 16) {
                 tierBadge.padding(.top, 8)
-                Text(app.skill.name).font(CX.title(34)).foregroundStyle(CX.navy)
-                Text(app.skill.subtitle).font(CX.heading(17)).foregroundStyle(CX.navySoft)
+                Text("\(app.league.name) League").font(CX.title(34)).foregroundStyle(CX.navy)
+                Text(app.league.subtitle).font(CX.heading(17)).foregroundStyle(CX.navySoft)
                     .multilineTextAlignment(.center)
 
                 Image(systemName: "lock.fill").font(.system(size: 30)).foregroundStyle(CX.navySoft).padding(.top, 8)
@@ -388,7 +413,7 @@ struct LeaguesView: View {
         ZStack {
             Circle().fill(tierColor.opacity(0.22)).frame(width: 150, height: 150)
             Circle().fill(tierColor.opacity(0.32)).frame(width: 112, height: 112)
-            Image(systemName: app.skill.icon).font(.system(size: 56)).foregroundStyle(tierColor)
+            Image(systemName: app.league.icon).font(.system(size: 56)).foregroundStyle(tierColor)
         }
     }
 
@@ -400,8 +425,8 @@ struct LeaguesView: View {
                 // League header
                 VStack(spacing: 4) {
                     HStack(spacing: 8) {
-                        Image(systemName: app.skill.icon).foregroundStyle(tierColor)
-                        Text("\(app.skill.name) League").font(CX.title(22)).foregroundStyle(CX.navy)
+                        Image(systemName: app.league.icon).foregroundStyle(tierColor)
+                        Text("\(app.league.name) League").font(CX.title(22)).foregroundStyle(CX.navy)
                     }
                     Text("Top \(Seed.leaguePromotionCount) advance · resets in \(app.leagueDaysLeft) day\(app.leagueDaysLeft == 1 ? "" : "s")")
                         .font(CX.label(13)).foregroundStyle(CX.navySoft)
@@ -417,11 +442,7 @@ struct LeaguesView: View {
                 } else {
                     ForEach(Array(board.enumerated()), id: \.element.id) { idx, entry in
                         if idx == Seed.leaguePromotionCount {
-                            zoneDivider("PROMOTION ZONE", color: CX.teal)
-                        }
-                        if board.count > Seed.leagueSize - Seed.leagueDemotionCount,
-                           idx == board.count - Seed.leagueDemotionCount {
-                            zoneDivider("DEMOTION ZONE", color: CX.orange)
+                            zoneDivider("PROMOTION ZONE — top \(Seed.leaguePromotionCount) move up", color: CX.teal)
                         }
                         leagueRow(entry)
                     }
@@ -559,6 +580,7 @@ struct LeaguesView: View {
 /// Explains how the weekly league works + the full rank ladder.
 struct LeagueInfoSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var app: AppState
     var body: some View {
         AppBackground {
             VStack(spacing: 0) {
@@ -574,27 +596,33 @@ struct LeagueInfoSheet: View {
                     VStack(spacing: 14) {
                         CXCard {
                             VStack(alignment: .leading, spacing: 10) {
-                                infoLine("person.3.fill", "Each league has \(Seed.leagueSize) players. Your rank is based on the XP you earn from cases.")
-                                infoLine("arrow.up.circle.fill", "Every Monday the top \(Seed.leaguePromotionCount) are promoted, the middle \(Seed.leagueSize - Seed.leaguePromotionCount - Seed.leagueDemotionCount) stay, and the bottom \(Seed.leagueDemotionCount) are demoted.")
-                                infoLine("dollarsign.circle.fill", "Weekly rewards: Top 3 earn \(Seed.leagueTopThreeReward) coins, promotion zone \(Seed.leaguePromotionReward), and safe zone \(Seed.leagueSafeReward).")
+                                infoLine("person.3.fill", "Each league room holds up to \(Seed.leagueSize) real players. Your rank is the XP you earn from cases this week.")
+                                infoLine("arrow.up.circle.fill", "Every week the top \(Seed.leaguePromotionCount) are promoted to the next league: Bronze → Silver → Gold → … → Diamond.")
+                                infoLine("dollarsign.circle.fill", "Promoted players earn coins + XP scaled by their finishing rank and the league they reach — the higher the league, the bigger the reward.")
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Text("THE LADDER").font(CX.label(13)).foregroundStyle(CX.navySoft)
+                        Text("THE LEAGUES").font(CX.label(13)).foregroundStyle(CX.navySoft)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         VStack(spacing: 0) {
-                            ForEach(Array(Seed.skillRanks.reversed().enumerated()), id: \.element.id) { idx, rank in
+                            ForEach(Array(League.allCases.reversed().enumerated()), id: \.element.rawValue) { idx, lg in
                                 HStack(spacing: 12) {
                                     ZStack {
-                                        Circle().fill(rank.color.opacity(0.18)).frame(width: 40, height: 40)
-                                        Image(systemName: rank.icon).font(.system(size: 19)).foregroundStyle(rank.color)
+                                        Circle().fill(lg.color.opacity(0.18)).frame(width: 40, height: 40)
+                                        Image(systemName: lg.icon).font(.system(size: 19)).foregroundStyle(lg.color)
                                     }
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(rank.name).font(CX.heading(16)).foregroundStyle(CX.navy)
-                                        Text(rank.subtitle).font(CX.body(13)).foregroundStyle(rank.color)
+                                        Text(lg.name).font(CX.heading(16)).foregroundStyle(CX.navy)
+                                        Text(lg == .diamond ? "Top league" : "League \(lg.tierLevel) of 10")
+                                            .font(CX.body(13)).foregroundStyle(lg.color)
                                     }
                                     Spacer()
+                                    if app.league == lg {
+                                        Text("YOU").font(CX.label(11)).foregroundStyle(.white)
+                                            .padding(.horizontal, 8).padding(.vertical, 3)
+                                            .background(lg.color, in: Capsule())
+                                    }
                                 }.padding(.horizontal, 14).padding(.vertical, 12)
-                                if idx < Seed.skillRanks.count - 1 { Divider().padding(.leading, 14) }
+                                if idx < League.allCases.count - 1 { Divider().padding(.leading, 14) }
                             }
                         }
                         .background(CX.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

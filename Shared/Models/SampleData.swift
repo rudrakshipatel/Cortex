@@ -122,32 +122,6 @@ enum Seed {
     // (see ContentStore). Kept as an empty list so HomeView still compiles.
     static let departments: [Department] = []
 
-    // MARK: League rank tiers (lowest → highest, by lifetime XP)
-    static let leagues: [League] = [
-        League(name: "Bronze", subtitle: "Every expert was once here.",
-               icon: "shield.fill", color: Color(hex: 0xCD8B5A), difficulty: 1, unlockXP: 0),
-        League(name: "Silver", subtitle: "Finding your footing.",
-               icon: "shield.fill", color: Color(hex: 0xB8C2CC), difficulty: 2, unlockXP: 100),
-        League(name: "Gold", subtitle: "A reliable diagnostician.",
-               icon: "shield.fill", color: CX.gold, difficulty: 3, unlockXP: 300),
-        League(name: "Platinum", subtitle: "Sharp, fast, consistent.",
-               icon: "shield.lefthalf.filled", color: Color(hex: 0x5AA9E6), difficulty: 4, unlockXP: 700),
-        League(name: "Diamond", subtitle: "Elite clinical reasoning.",
-               icon: "diamond.fill", color: Color(hex: 0x7FD8E8), difficulty: 5, unlockXP: 1500),
-        League(name: "Master", subtitle: "You call the final shots.",
-               icon: "crown.fill", color: Color(hex: 0x9B7BE0), difficulty: 6, unlockXP: 3000)
-    ]
-
-    /// The rank tier a given lifetime-XP total currently sits in.
-    static func tier(forXP xp: Int) -> League {
-        leagues.last { xp >= $0.unlockXP } ?? leagues[0]
-    }
-
-    /// The next tier above the current XP, if any (nil once at Chief).
-    static func nextTier(afterXP xp: Int) -> League? {
-        leagues.first { $0.unlockXP > xp }
-    }
-
     // MARK: Skill ranks (one per 10 levels: 1–10, 11–20, … up to 71–80+)
     static let skillRanks: [SkillRank] = [
         SkillRank(name: "Medical Student",  subtitle: "Every expert was once here.",             icon: "graduationcap.fill",  color: Color(hex: 0xF08AB0)),
