@@ -67,18 +67,23 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         var toSchedule: [(UUID, Date)] = []
         var toFire: [UUID] = []
 
-        for ec in emergencies {
-            let idStr = ec.id.uuidString
-            if notified.contains(idStr) {
-                if now < ec.fireDate { toSchedule.append((ec.id, ec.fireDate)) }   // keep a future one fresh
-                continue
-            }
-            if now < ec.fireDate {
-                toSchedule.append((ec.id, ec.fireDate)); notified.insert(idStr)
-            } else if now < ec.expiry {                    // already live → alert immediately
-                toFire.append(ec.id); notified.insert(idStr)
-            }
+        // Upcoming emergencies: schedule each at its fire time (one alert each,
+        // delivered even if the app is later closed).
+        for ec in emergencies where now < ec.fireDate {
+            toSchedule.append((ec.id, ec.fireDate))
+            notified.insert(ec.id.uuidString)
         }
+
+        // Live-now emergencies: alert ONCE for the most recent and mark all of
+        // them handled, so several overlapping (or leftover test) emergencies
+        // never produce a burst — matches the single Home emergency card.
+        let liveNow = emergencies.filter { now >= $0.fireDate && now < $0.expiry }
+        let newlyLive = liveNow.filter { !notified.contains($0.id.uuidString) }
+        if let latest = newlyLive.max(by: { $0.fireDate < $1.fireDate }) {
+            toFire.append(latest.id)
+        }
+        for ec in liveNow { notified.insert(ec.id.uuidString) }
+
         // Forget ids no longer present so a re-broadcast can alert again, and
         // persist SYNCHRONOUSLY now — before the async auth call — so overlapping
         // calls (launch + foreground + poll) can't each fire a duplicate.
