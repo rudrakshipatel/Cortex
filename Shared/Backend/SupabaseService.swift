@@ -163,15 +163,20 @@ final class SupabaseService: ObservableObject {
 
     // MARK: - Cloud profile (per-account game state)
 
-    /// Load this account's saved game state, or nil if there's no profile yet.
-    func loadProfile() async -> Data? {
+    /// Result of a profile load — distinguishes "no row yet" (a genuinely new
+    /// account) from "the request failed" (network/auth), so a transient blip is
+    /// never mistaken for a fresh account and used to wipe progress.
+    enum ProfileLoad { case found(Data), empty, failed }
+
+    func loadProfile() async -> ProfileLoad {
         guard isConfigured, let uid = await currentUserId(),
               let (data, _) = try? await send(method: "GET",
                   path: "rest/v1/profiles?user_id=eq.\(uid)&select=state", player: true),
-              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let state = rows.first?["state"]
-        else { return nil }
-        return try? JSONSerialization.data(withJSONObject: state)
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return .failed }
+        guard let state = rows.first?["state"],
+              let blob = try? JSONSerialization.data(withJSONObject: state) else { return .empty }
+        return .found(blob)
     }
 
     /// Upsert this account's game state (the `stateJSON` is the encoded profile).

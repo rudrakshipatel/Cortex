@@ -151,8 +151,10 @@ final class AppState: ObservableObject {
 
     /// The slice of state that belongs to the account (everything except the
     /// device-local `playerId`). Stored as the `state` JSON in `profiles`.
+    /// Note: `onboarded` is deliberately NOT here — onboarding completion is a
+    /// sticky, device-local flag (UserDefaults), so a sync hiccup or a fresh
+    /// profile can never make the onboarding flow reappear.
     struct ProfileState: Codable {
-        var onboarded = false
         var lifetimeXP = 0, coins = 500, life = AppState.maxLife
         var displayName = "Dr. Vix Trainee", country = ""
         var streak = 0, lastActiveEpochDay = 0, highestStreak = 0, streakFreezes = 0
@@ -165,7 +167,7 @@ final class AppState: ObservableObject {
 
     func exportProfile() -> ProfileState {
         ProfileState(
-            onboarded: onboarded, lifetimeXP: lifetimeXP, coins: coins, life: life,
+            lifetimeXP: lifetimeXP, coins: coins, life: life,
             displayName: displayName, country: country, streak: streak,
             lastActiveEpochDay: lastActiveEpochDay, highestStreak: highestStreak,
             streakFreezes: streakFreezes, activeDays: Array(activeDays), lastLifeDay: lastLifeDay,
@@ -177,7 +179,7 @@ final class AppState: ObservableObject {
     }
 
     func applyProfile(_ p: ProfileState) {
-        onboarded = p.onboarded
+        // `onboarded` intentionally untouched — it's a sticky local flag.
         lifetimeXP = p.lifetimeXP; coins = p.coins; life = p.life
         displayName = p.displayName; country = p.country
         streak = p.streak; lastActiveEpochDay = p.lastActiveEpochDay
@@ -194,10 +196,10 @@ final class AppState: ObservableObject {
     }
 
     /// Reset all account progress to a fresh start (used when a new account signs
-    /// in on a device that previously held a different one).
+    /// in on a device that previously held a different one). Leaves `onboarded`
+    /// alone — the device has already been through onboarding.
     func resetProgress() {
         applyProfile(ProfileState())
-        onboarded = false
     }
 
     /// Bind the signed-in account: load its cloud profile, or create a fresh one.
@@ -207,16 +209,22 @@ final class AppState: ObservableObject {
         guard SupabaseService.shared.isSignedIn else { return }
         isSyncing = true
         defer { isSyncing = false; accountBound = true }
-        if let data = await SupabaseService.shared.loadProfile(),
-           let p = try? JSONDecoder().decode(ProfileState.self, from: data) {
-            applyProfile(p)                              // existing account → its own state
-        } else {
+        switch await SupabaseService.shared.loadProfile() {
+        case .found(let data):
+            if let p = try? JSONDecoder().decode(ProfileState.self, from: data) {
+                applyProfile(p)                          // existing account → its own state
+            }
+            defaults.set(true, forKey: "cx.hasBoundAccount")
+        case .empty:
+            // Genuinely no profile for this account.
             if defaults.bool(forKey: "cx.hasBoundAccount") {
-                resetProgress()                          // different/new account → fresh
-            }                                            // else: claim the device's current progress
+                resetProgress()                          // a different account had this device → fresh
+            }                                            // else: first ever → claim current local progress
             await pushProfileNow()                       // create the row
+            defaults.set(true, forKey: "cx.hasBoundAccount")
+        case .failed:
+            break   // transient failure — keep local state, don't reset or overwrite the cloud
         }
-        defaults.set(true, forKey: "cx.hasBoundAccount")
     }
 
     /// Save the latest state, then forget the account (used on sign-out).
