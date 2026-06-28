@@ -365,8 +365,11 @@ final class AppState: ObservableObject {
     }
 
     // MARK: Specialty mastery trophies (count of solved cases per specialty)
-    /// Solve thresholds: Bronze at 10, Silver at 50, Gold at 100 cases.
-    static let bronzeMastery = 10, silverMastery = 50, goldMastery = 100
+    /// Cumulative solve totals to earn each trophy. The card chips show this as
+    /// three segments — Bronze: first 10, Silver: next 50 (→60), Gold: next 100 (→160).
+    static let bronzeMastery = 10, silverMastery = 60, goldMastery = 160
+    /// Segment sizes shown on the per-specialty progress chips.
+    static let bronzeSegment = 10, silverSegment = 50, goldSegment = 100
 
     /// Highest mastery trophy reached in a specialty: 3 = Gold, 2 = Silver, 1 = Bronze, 0 = none.
     func masteryTier(_ specialty: String) -> Int {

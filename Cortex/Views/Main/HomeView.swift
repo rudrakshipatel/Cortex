@@ -201,7 +201,8 @@ struct PracticeView: View {
                         } else {
                             ForEach(store.clinicalCases) { c in
                                 DepartmentCard(dept: caseDept(c, "🩺"), solved: app.isCaseSolved(c.id),
-                                               trophy: app.caseTrophyTier(c.id)) { launch(c) }
+                                               trophy: app.caseTrophyTier(c.id),
+                                               masterySolved: app.solvedCount(in: c.specialty)) { launch(c) }
                             }
                         }
                     }
@@ -251,7 +252,12 @@ struct DepartmentCard: View {
     var solved: Bool = false
     /// Trophy tier earned for this case (1 bronze, 2 silver, 3 gold), nil if unsolved.
     var trophy: Int? = nil
+    /// Cases solved in this specialty — drives the mastery progress chips.
+    var masterySolved: Int = 0
     var onPlay: () -> Void
+
+    private static let bronzeColor = Color(hex: 0xCD8B5A)
+
     var body: some View {
         CXCard {
             HStack(spacing: 14) {
@@ -265,11 +271,7 @@ struct DepartmentCard: View {
                     }
                     Text(dept.teaser).font(CX.body(15)).foregroundStyle(CX.navySoft)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let tier = trophy ?? (solved ? 1 : nil) {
-                        earnedTrophy(tier)
-                    } else {
-                        Text("Not solved yet").font(CX.label(12)).foregroundStyle(CX.navySoft)
-                    }
+                    masteryChips
                 }
                 Spacer(minLength: 4)
                 Button(action: onPlay) {
@@ -284,16 +286,24 @@ struct DepartmentCard: View {
         }
     }
 
-    /// A single earned-trophy badge (tier colour + label).
-    private func earnedTrophy(_ tier: Int) -> some View {
-        let kind: TrophyChip.Kind = tier >= 3 ? .gold : (tier == 2 ? .silver : .bronze)
-        let label = tier >= 3 ? "Gold" : (tier == 2 ? "Silver" : "Bronze")
-        return HStack(spacing: 6) {
-            Image(systemName: "trophy.fill").font(.system(size: 13)).foregroundStyle(kind.color)
-            Text("1 \(label) Trophy").font(CX.label(12)).foregroundStyle(CX.navy)
+    /// Three segmented mastery-trophy progress chips for this specialty.
+    private var masteryChips: some View {
+        let n = masterySolved
+        return HStack(spacing: 8) {
+            masteryChip(progress: min(n, AppState.bronzeSegment), of: AppState.bronzeSegment, color: Self.bronzeColor)
+            masteryChip(progress: max(0, min(n - AppState.bronzeMastery, AppState.silverSegment)), of: AppState.silverSegment, color: CX.teal)
+            masteryChip(progress: max(0, min(n - AppState.silverMastery, AppState.goldSegment)), of: AppState.goldSegment, color: CX.gold)
         }
-        .padding(.horizontal, 11).padding(.vertical, 6)
-        .background(kind.color.opacity(0.14), in: Capsule())
+    }
+
+    private func masteryChip(progress: Int, of total: Int, color: Color) -> some View {
+        let earned = progress >= total
+        return HStack(spacing: 5) {
+            Text("\(progress)/\(total)").font(CX.label(12)).foregroundStyle(CX.navy)
+            Image(systemName: "trophy.fill").font(.system(size: 13)).foregroundStyle(color)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(earned ? color.opacity(0.22) : CX.navySoft.opacity(0.08), in: Capsule())
     }
 }
 
@@ -901,9 +911,9 @@ struct TrophyDetailSheet: View {
                         CXCard {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Master each specialty").font(CX.heading(17)).foregroundStyle(CX.navy)
-                                ruleRow(Self.bronzeColor, "Bronze", "Solve \(AppState.bronzeMastery) cases")
-                                ruleRow(CX.teal, "Silver", "Solve \(AppState.silverMastery) cases")
-                                ruleRow(CX.gold, "Gold", "Solve \(AppState.goldMastery) cases")
+                                ruleRow(Self.bronzeColor, "Bronze", "Solve \(AppState.bronzeSegment) cases")
+                                ruleRow(CX.teal, "Silver", "Solve \(AppState.silverSegment) more (\(AppState.silverMastery))")
+                                ruleRow(CX.gold, "Gold", "Solve \(AppState.goldSegment) more (\(AppState.goldMastery))")
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
 
