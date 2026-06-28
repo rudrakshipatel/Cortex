@@ -61,28 +61,35 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// call on every launch/foreground.
     func syncEmergencyNotifications(_ emergencies: [EmergencyCase]) {
         guard !emergencies.isEmpty else { return }
+        let now = Date()
+        let d = UserDefaults.standard
+        var notified = Set(d.stringArray(forKey: Self.notifiedKey) ?? [])
+        var toSchedule: [(UUID, Date)] = []
+        var toFire: [UUID] = []
+
+        for ec in emergencies {
+            let idStr = ec.id.uuidString
+            if notified.contains(idStr) {
+                if now < ec.fireDate { toSchedule.append((ec.id, ec.fireDate)) }   // keep a future one fresh
+                continue
+            }
+            if now < ec.fireDate {
+                toSchedule.append((ec.id, ec.fireDate)); notified.insert(idStr)
+            } else if now < ec.expiry {                    // already live → alert immediately
+                toFire.append(ec.id); notified.insert(idStr)
+            }
+        }
+        // Forget ids no longer present so a re-broadcast can alert again, and
+        // persist SYNCHRONOUSLY now — before the async auth call — so overlapping
+        // calls (launch + foreground + poll) can't each fire a duplicate.
+        notified.formIntersection(Set(emergencies.map { $0.id.uuidString }))
+        d.set(Array(notified), forKey: Self.notifiedKey)
+
+        guard !toSchedule.isEmpty || !toFire.isEmpty else { return }
         requestAuthorization { granted in
             guard granted else { return }
-            let now = Date()
-            var notified = Set(UserDefaults.standard.stringArray(forKey: Self.notifiedKey) ?? [])
-            for ec in emergencies {
-                let idStr = ec.id.uuidString
-                if notified.contains(idStr) {
-                    if now < ec.fireDate { self.scheduleEmergency(id: ec.id, at: ec.fireDate) } // keep fresh
-                    continue
-                }
-                if now < ec.fireDate {
-                    self.scheduleEmergency(id: ec.id, at: ec.fireDate)
-                    notified.insert(idStr)
-                } else if now < ec.expiry {              // already live → alert immediately
-                    self.fireEmergencyNow(id: ec.id)
-                    notified.insert(idStr)
-                }
-            }
-            // Forget ids no longer present so re-broadcasts can alert again.
-            let live = Set(emergencies.map { $0.id.uuidString })
-            notified.formIntersection(live)
-            UserDefaults.standard.set(Array(notified), forKey: Self.notifiedKey)
+            for (id, date) in toSchedule { self.scheduleEmergency(id: id, at: date) }
+            for id in toFire { self.fireEmergencyNow(id: id) }
         }
     }
 

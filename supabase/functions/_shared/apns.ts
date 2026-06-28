@@ -74,9 +74,13 @@ export async function sendPush(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      // Ambulance-siren sound. Requires `siren.caf` bundled in the iOS app
-      // target; APNs falls back to the default sound if it's missing.
-      aps: { alert: { title: payload.title, body: payload.body }, sound: "siren.caf" },
+      // Ambulance-siren sound (siren.caf is bundled in the iOS app). Time-
+      // sensitive so it breaks through Focus / Do Not Disturb.
+      aps: {
+        alert: { title: payload.title, body: payload.body },
+        sound: "siren.caf",
+        "interruption-level": "time-sensitive",
+      },
       emergencyId: payload.emergencyId,
     }),
   });
