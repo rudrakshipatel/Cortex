@@ -283,7 +283,11 @@ final class SupabaseService: ObservableObject {
             comps.hour = (row["local_hour"] as? Int) ?? 0
             comps.minute = (row["local_minute"] as? Int) ?? 0
             guard let fireDate = cal.date(from: comps) else { continue }
-            let ec = EmergencyCase(clinicalCase: clinicalCase, fireDate: fireDate)
+            var ec = EmergencyCase(clinicalCase: clinicalCase, fireDate: fireDate)
+            // Use the STABLE server row id (not a fresh UUID each fetch) so the
+            // notification dedup recognises the same emergency across polls —
+            // otherwise it re-alerts every refresh ("constant ringing").
+            if let rid = UUID(uuidString: rowId) { ec.id = rid }
             if now < ec.expiry { out.append(ec) }   // active or upcoming; drop expired
         }
         return out
