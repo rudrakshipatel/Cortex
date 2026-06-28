@@ -636,17 +636,43 @@ extension ClinicalCase {
     /// Difficulty 1…5 (defaults to a middle 3).
     var difficultyLevel: Int { Swift.min(5, Swift.max(1, difficulty ?? 3)) }
 
-    /// Number of bundled case illustrations (case-img-1 … case-img-N).
-    static let caseImageCount = 11
     /// The hero illustration for this case — the authored `imageName` if set,
-    /// else one of the bundled illustrations chosen deterministically from the
-    /// case content (so the same case always shows the same picture everywhere).
+    /// else a bundled illustration whose depicted patient matches this case's
+    /// gender and age (a young woman's case shows a young woman, a child's shows
+    /// a child, …). Stable per case, so the same case always shows the same one.
     var heroImageName: String {
         if let n = imageName?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
-        let key = specialty + "|" + patientName + "|" + chiefComplaint
+        let candidates = Self.imageCandidates(gender: gender, age: age)
         var h: UInt64 = 1469598103934665603
-        for b in key.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
-        return "case-img-\(Int(h % UInt64(Self.caseImageCount)) + 1)"
+        for b in (specialty + "|" + patientName + "|" + chiefComplaint).utf8 {
+            h = (h ^ UInt64(b)) &* 1099511628211
+        }
+        return "case-img-\(candidates[Int(h % UInt64(candidates.count))])"
+    }
+
+    /// Illustration numbers (case-img-N) whose depicted patient roughly matches
+    /// the given gender + age. The bundled images depict, in order:
+    /// 1,11 young woman · 2 elderly man · 3,4 mother+baby · 5 elderly woman ·
+    /// 6 boy · 7 girl · 8 adult man · 9 surgery (adult) · 10 surgery (elderly man).
+    static func imageCandidates(gender: String, age: String) -> [Int] {
+        let g = gender.lowercased()
+        let female = g.hasPrefix("f")
+        let male = g.hasPrefix("m")
+        let a = age.lowercased()
+        let group: Int   // 0 = baby, 1 = child, 2 = adult, 3 = elderly
+        if a.contains("week") || a.contains("month") || a.contains("day") {
+            group = 0
+        } else {
+            let digits = a.drop(while: { !$0.isNumber }).prefix(while: { $0.isNumber })
+            let n = Int(digits) ?? 30
+            group = n <= 1 ? 0 : (n < 13 ? 1 : (n < 60 ? 2 : 3))
+        }
+        switch group {
+        case 0:  return [3, 4]                                              // baby / infant
+        case 1:  return female ? [7] : (male ? [6] : [6, 7])               // child
+        case 2:  return female ? [1, 11] : (male ? [8, 9] : [1, 8, 9, 11]) // adult
+        default: return female ? [5] : (male ? [2, 10] : [2, 5, 10])       // elderly
+        }
     }
 
     /// Info arranged into the standard clinical reading order regardless
