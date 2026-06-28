@@ -61,7 +61,7 @@ struct HomeView: View {
             })
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Energy regenerates over time, refilling to \(AppState.maxLife) in about a day. Daily and Emergency cases are always free.")
+            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro to play unlimited — Daily and Emergency cases are always free.")
         }
         .onReceive(ticker) { t in
             now = t
@@ -134,7 +134,7 @@ struct HomeView: View {
             if let c = randomCase {
                 CaseHeroCard(clinicalCase: c, skill: app.skill,
                              costsEnergy: true, kicker: "RANDOM CASE", solveTitle: "Solve the case") {
-                    guard app.canAfford(life: AppState.maxEnergyCost) else { showNoLife = true; return }
+                    guard app.canAfford(life: app.randomCaseCost) else { showNoLife = true; return }
                     activeKind = .random; active = c
                 }
             } else {
@@ -209,13 +209,13 @@ struct PracticeView: View {
         }
         .fullScreenCover(item: $active) { c in CaseFlow(clinicalCase: c) }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Energy refills to \(AppState.maxLife) at 00:00 GMT.")
+            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro to play unlimited.")
         }
         .onAppear { app.refreshForNewDay() }
     }
 
     private func launch(_ c: ClinicalCase) {
-        guard app.canAfford(life: AppState.maxEnergyCost) else { showNoLife = true; return }
+        guard app.canAfford(life: app.randomCaseCost) else { showNoLife = true; return }
         active = c
     }
 }
@@ -314,6 +314,7 @@ struct LeaguesView: View {
     @State private var active: ClinicalCase?
     @State private var randomCase: ClinicalCase?
     @State private var showLearnMore = false
+    @State private var showNoLife = false
 
     private var tierColor: Color { app.league.color }
 
@@ -365,6 +366,9 @@ struct LeaguesView: View {
         }
         .fullScreenCover(item: $active, onDismiss: { ensureRandom() }) { c in
             CaseFlow(clinicalCase: c, consumesLife: true)
+        }
+        .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
+            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro to play unlimited.")
         }
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
         .alert("Promoted! 🎉", isPresented: Binding(get: { promotion != nil }, set: { if !$0 { promotion = nil } })) {
@@ -579,6 +583,7 @@ struct LeaguesView: View {
         randomCase = unsolved.randomElement() ?? store.clinicalCases.randomElement()
     }
     private func solveCase() {
+        guard app.canAfford(life: app.randomCaseCost) else { showNoLife = true; return }
         ensureRandom()
         active = randomCase
     }

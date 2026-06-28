@@ -124,7 +124,7 @@ struct FAQsView: View {
         ("How is my XP scored?",
          "Each case is worth up to 100 XP. You earn the full 100 only for a flawless workup; your score reflects how accurate your tests, diagnosis and treatment were."),
         ("How does energy work?",
-         "Energy slowly refills over time — a little every minute, up to a full bar of 100. Each case costs between 5 and 15 energy depending on how well you did: better solves cost less."),
+         "Energy slowly refills over time — a little every minute, up to a full bar of 100. Each random/practice case costs 50 energy, so you can play about two on a full bar. Go Pro to play unlimited. Daily and Emergency cases are always free."),
         ("What are streaks?",
          "Play at least one case a day to keep your streak alive. Hitting milestone streaks rewards bonus coins, and a Streak Freeze from the shop can protect you on a day you miss."),
         ("What do coins do?",

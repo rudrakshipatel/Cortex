@@ -173,7 +173,7 @@ struct CaseFlow: View {
         awarded = true
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
-        if consumesLife { app.spendEnergy(AppState.energyCost(forXP: session.earnedXP)) }
+        if consumesLife { app.spendEnergy(app.randomCaseCost) }   // 50 for free, 0 for Pro
         // A case counts as "solved" only if the attempt scored ≥ 25 XP;
         // below that it stays unsolved and can be replayed.
         if session.solved {

@@ -448,6 +448,12 @@ final class AppState: ObservableObject {
         let cost = maxEnergyCost - Int((Double(xp) / 10.0).rounded())
         return Swift.min(maxEnergyCost, Swift.max(minEnergyCost, cost))
     }
+
+    /// Energy a random/practice case costs to play. Free players pay a flat 50
+    /// (so they can play ~2 per full bar); Pro players play unlimited (0).
+    static let randomCaseEnergyCost = 50
+    var randomCaseCost: Int { isPro ? 0 : Self.randomCaseEnergyCost }
+
     func canAfford(life cost: Int) -> Bool { life >= cost }
     /// Spend energy after a case, never dropping below zero. Banks any pending
     /// regen first, then starts the regen clock if this drops us below full.
