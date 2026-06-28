@@ -233,25 +233,27 @@ final class SupabaseService: ObservableObject {
                 path: "rest/v1/rpc/get_cases", body: Data("{}".utf8)),
               let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
 
-        var clinical: [ClinicalCase] = [], daily: [DailyCase] = [], ids: [String] = []
+        var clinical: [ClinicalCase] = [], daily: [DailyCase] = []
         for row in rows {
-            guard let id = row["id"] as? String, !store.hasIngested(id),
+            guard let id = row["id"] as? String,
                   let kind = row["kind"] as? String, let payload = row["payload"],
                   let pdata = try? JSONSerialization.data(withJSONObject: payload) else { continue }
             let ref = RemoteRef(source: "content", id: id)
             switch kind {
             case "clinical":
                 if var c = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("server", requireKey: false) {
-                    c.remote = ref; clinical.append(c); ids.append(id)
+                    c.remote = ref; clinical.append(c)
                 }
             case "daily":
                 if var d = try? JSONDecoder().decode(DailyDTO.self, from: pdata).toModel("server", requireKey: false) {
-                    d.clinicalCase.remote = ref; daily.append(d); ids.append(id)
+                    d.clinicalCase.remote = ref; daily.append(d)
                 }
             default: break
             }
         }
-        if !ids.isEmpty { store.addRemote(clinical: clinical, daily: daily, serverIDs: ids) }
+        // Authoritative: mirror exactly what the server returned (we only reach
+        // here on a successful fetch, so an empty server clears local content).
+        store.setServerContent(clinical: clinical, daily: daily)
     }
 
     /// Pull all broadcast emergencies (answer-stripped) and turn them into

@@ -96,19 +96,29 @@ final class ContentStore: ObservableObject {
         save()
     }
 
-    // MARK: Server sync
-    private var importedServerIDs: Set<String> =
-        Set(UserDefaults.standard.stringArray(forKey: "cx.importedServerIDs") ?? [])
+    // MARK: Server sync (authoritative)
 
-    /// Whether a server content row has already been pulled into this device.
-    func hasIngested(_ serverID: String) -> Bool { importedServerIDs.contains(serverID) }
+    /// Make the local cache mirror the authoritative server content. The freshly
+    /// fetched `clinical` / `daily` cases each carry their server `remote` id.
+    /// Cases still present on the server keep their existing *local* id (so the
+    /// player's solved-state and in-flight selection stay stable); cases that
+    /// were deleted on the server disappear here too; brand-new cases are added.
+    /// Call this only with a successful fetch — never on a network failure, or
+    /// it would wrongly wipe everything.
+    func setServerContent(clinical fresh: [ClinicalCase], daily freshDaily: [DailyCase]) {
+        var existing: [String: ClinicalCase] = [:]
+        for c in clinicalCases { if let rid = c.remote?.id { existing[rid] = c } }
+        clinicalCases = fresh.map { f in
+            if let rid = f.remote?.id, let keep = existing[rid] { return keep }
+            return f
+        }
 
-    /// Merge content pulled from Supabase, skipping anything already ingested.
-    func addRemote(clinical newCases: [ClinicalCase], daily newDaily: [DailyCase], serverIDs: [String]) {
-        clinicalCases.append(contentsOf: newCases)
-        dailyCases.append(contentsOf: newDaily)
-        importedServerIDs.formUnion(serverIDs)
-        UserDefaults.standard.set(Array(importedServerIDs), forKey: "cx.importedServerIDs")
+        var existingDaily: [String: DailyCase] = [:]
+        for d in dailyCases { if let rid = d.clinicalCase.remote?.id { existingDaily[rid] = d } }
+        dailyCases = freshDaily.map { f in
+            if let rid = f.clinicalCase.remote?.id, let keep = existingDaily[rid] { return keep }
+            return f
+        }
         save()
     }
 

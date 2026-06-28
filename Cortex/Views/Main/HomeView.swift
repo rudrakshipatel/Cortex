@@ -9,6 +9,10 @@ struct HomeView: View {
     @State private var activeDayKey: Int?
     @State private var randomCase: ClinicalCase?
     @State private var showNoLife = false
+    /// After finishing a random case we chain straight into the next one; this
+    /// remembers the case we just played so we don't immediately re-serve it.
+    @State private var chainRandom = false
+    @State private var lastRandomID: UUID?
     /// Drives live re-evaluation of the emergency window (opens/closes on time).
     @State private var now = Date()
     @State private var lastEmergencyPoll = Date.distantPast
@@ -55,9 +59,11 @@ struct HomeView: View {
                 }
             }
         }
-        .fullScreenCover(item: $active, onDismiss: { ensureRandom() }) { c in
+        .fullScreenCover(item: $active, onDismiss: { advanceAfterDismiss() }) { c in
             CaseFlow(clinicalCase: c, consumesLife: activeKind == .random, onFinish: { _ in
                 if activeKind == .daily, let day = activeDayKey { app.markDailySolved(day: day) }
+                // Finishing a random case automatically opens the next one.
+                if activeKind == .random { lastRandomID = active?.id; chainRandom = true }
             })
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
@@ -124,10 +130,32 @@ struct HomeView: View {
 
     /// Ensures `randomCase` holds a valid unsolved case to preview & play. Keeps
     /// the same case stable until it's solved (so the teaser matches the button).
-    private func ensureRandom() {
-        let unsolved = store.clinicalCases.filter { !app.isCaseSolved($0.id) }
-        if let c = randomCase, unsolved.contains(where: { $0.id == c.id }) { return }
+    /// When `excluding` is set we always re-pick, avoiding that case if any other
+    /// unsolved case is available (used when chaining to the next random case).
+    private func ensureRandom(excluding excludeID: UUID? = nil) {
+        var unsolved = store.clinicalCases.filter { !app.isCaseSolved($0.id) }
+        if let ex = excludeID {
+            let others = unsolved.filter { $0.id != ex }
+            if !others.isEmpty { unsolved = others }
+        } else if let c = randomCase, unsolved.contains(where: { $0.id == c.id }) {
+            return
+        }
         randomCase = unsolved.randomElement()
+    }
+
+    /// Runs after a case cover closes. If the player just finished a random case,
+    /// pick the next unsolved one and — energy permitting — open it immediately
+    /// so cases flow one into the next without a trip back to Home.
+    private func advanceAfterDismiss() {
+        let chaining = chainRandom
+        let justPlayed = lastRandomID
+        chainRandom = false
+        lastRandomID = nil
+        ensureRandom(excluding: chaining ? justPlayed : nil)
+        guard chaining, let next = randomCase, app.canAfford(life: app.randomCaseCost) else { return }
+        activeKind = .random
+        // Re-present once the dismissal animation has settled.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { active = next }
     }
 
     /// A surprise case from the practice collection — costs Energy. Only ever

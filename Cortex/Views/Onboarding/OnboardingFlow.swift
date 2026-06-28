@@ -34,7 +34,7 @@ private struct IntroCarousel: View {
     private let slides = [
         Slide(title: "Welcome to Cortex", image: "case-img-11",
               bullets: ["You're the only doctor on duty today.", "Every department is waiting for your lead."]),
-        Slide(title: "Your Patients Are Waiting", image: "case-img-1",
+        Slide(title: "Your Patients Are Waiting", image: "case-img-3",
               bullets: ["Each specialty has a patient ready.", "Solve a case to unlock the next.", "Cases get harder as you grow."]),
         Slide(title: "Every Decision Counts", image: "case-img-9",
               bullets: ["From history to diagnosis, reason it out.", "Dr. Vix mentors you at every step."]),
