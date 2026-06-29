@@ -368,8 +368,27 @@ struct LeaguesView: View {
                 totalXP: app.lifetimeXP, trophies: app.gold, username: app.displayName)
         }
         let members = await SupabaseService.shared.fetchLeague(week: week)
-        board = Seed.leagueEntries(from: members, youId: SupabaseService.shared.userId)
+        var entries = Seed.leagueEntries(from: members, youId: SupabaseService.shared.userId)
+        // Always surface the leaderboard for a qualified player, even with just a
+        // handful of people in the room (or before the server room has propagated):
+        // if our own row isn't in the fetched members yet, add it so the board is
+        // never blank just because fewer than a full room of 30 have joined.
+        if app.qualifiedForLeague, !entries.contains(where: { $0.isYou }) {
+            entries.append(makeSelfEntry(rank: entries.count + 1))
+        }
+        board = entries
         loadingLeague = false
+    }
+
+    /// A leaderboard row for the current player, built from local state — used as
+    /// a fallback so the league always shows the user when the server room is
+    /// empty or hasn't included them yet.
+    private func makeSelfEntry(rank: Int) -> LeagueEntry {
+        var e = LeagueEntry(name: app.displayName, weeklyXP: app.weeklyXP,
+                            totalXP: app.lifetimeXP, trophies: app.gold, isYou: true)
+        e.rank = rank
+        e.avatarTint = CX.orange
+        return e
     }
 
     /// On the first visit of a new league week, look up last week's final rank;
