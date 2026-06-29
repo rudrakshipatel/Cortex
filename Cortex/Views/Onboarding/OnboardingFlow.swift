@@ -170,13 +170,10 @@ private struct AuthScreen: View {
         error = nil; working = provider
         Task {
             do {
-                let email = try await sb.signInWithOAuth(provider: provider)
+                _ = try await sb.signInWithOAuth(provider: provider)
                 // Load this account's cloud profile (creates a fresh one for a new
                 // account). RootView then routes to onboarding or the main app.
                 await app.bindAccount()
-                if let email, !email.isEmpty, app.displayName == "Dr. Vix Trainee" {
-                    app.displayName = email.components(separatedBy: "@").first.map { "Dr. " + $0.capitalized } ?? app.displayName
-                }
                 working = nil
             } catch {
                 working = nil
@@ -288,11 +285,8 @@ private struct EmailSignInSheet: View {
         guard !busy else { return }
         error = nil; busy = true; defer { busy = false }
         do {
-            let mail = try await sb.verifyEmailCode(email.trimmingCharacters(in: .whitespaces).lowercased(), code: code)
+            _ = try await sb.verifyEmailCode(email.trimmingCharacters(in: .whitespaces).lowercased(), code: code)
             await app.bindAccount()
-            if let mail, !mail.isEmpty, app.displayName == "Dr. Vix Trainee" {
-                app.displayName = mail.components(separatedBy: "@").first.map { "Dr. " + $0.capitalized } ?? app.displayName
-            }
             dismiss()
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? "That code didn't work."

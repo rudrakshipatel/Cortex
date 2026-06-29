@@ -139,7 +139,7 @@ final class AppState: ObservableObject {
         solvedCaseIDs = Set(d.stringArray(forKey: K.solvedCases) ?? [])
         specialtySolved = d.dictionary(forKey: K.specialtySolved) as? [String: Int] ?? [:]
         caseTrophies = d.dictionary(forKey: K.caseTrophies) as? [String: Int] ?? [:]
-        displayName = d.string(forKey: K.name) ?? "Dr. Vix Trainee"
+        displayName = d.string(forKey: K.name) ?? "Dr. Vix"
         casesSolved = d.object(forKey: K.casesSolved) as? Int ?? 0
         casesFinished = d.object(forKey: K.casesFinished) as? Int ?? 0
         weeklyXP = d.object(forKey: K.weeklyXP) as? Int ?? 0
@@ -172,7 +172,7 @@ final class AppState: ObservableObject {
     /// profile can never make the onboarding flow reappear.
     struct ProfileState: Codable {
         var lifetimeXP = 0, coins = 500, life = AppState.maxLife
-        var displayName = "Dr. Vix Trainee", country = ""
+        var displayName = "Dr. Vix", country = ""
         var streak = 0, lastActiveEpochDay = 0, highestStreak = 0, streakFreezes = 0
         var activeDays: [Int] = [], lastLifeDay = 0, lastEnergyTS = 0.0
         var solvedDailyDays: [Int] = [], solvedCaseIDs: [String] = []
