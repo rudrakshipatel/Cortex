@@ -16,6 +16,7 @@ struct CaseFlow: View {
     @State private var showResults = false
     @State private var recorded = false   // ensures grading is kicked off exactly once
     @State private var awarded = false    // ensures rewards are applied exactly once
+    @State private var showProUpsell = false   // Go Pro screen shown after each case (free users)
 
     enum Step: Int, CaseIterable { case info, tests, results, diagnosis, treatment, outcome }
 
@@ -59,7 +60,12 @@ struct CaseFlow: View {
             ReviewSheet(title: "Test Results") { ResultsReview(ordered: session.tray) }
         }
         .fullScreenCover(isPresented: $showStreak) {
-            CaseRewardCover(coins: session.earnedCoins) { dismiss() }
+            CaseRewardCover(coins: session.earnedCoins) { finishReward() }
+        }
+        // After every case, free users see the Go Pro screen; dismissing it
+        // (subscribe or "No thanks") returns them to where they came from.
+        .sheet(isPresented: $showProUpsell, onDismiss: { dismiss() }) {
+            GoProSheet()
         }
         .onChange(of: step) { _, _ in speech.stop() }   // stop narration when the step changes
         // Apply rewards exactly once, the moment the result is known (local cases
@@ -192,6 +198,15 @@ struct CaseFlow: View {
     private func finish() {
         recordOutcome()
         showStreak = true
+    }
+
+    /// The reward celebration finished. Pro users go straight back; free users
+    /// get the Go Pro screen first, then return when they dismiss it.
+    private func finishReward() {
+        showStreak = false
+        guard !app.isPro else { dismiss(); return }
+        // Let the reward cover finish dismissing before presenting the sheet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProUpsell = true }
     }
 }
 
