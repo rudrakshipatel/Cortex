@@ -2,6 +2,7 @@ import SwiftUI
 import StoreKit
 
 struct MainTabView: View {
+    @EnvironmentObject var app: AppState
     @EnvironmentObject var store: ContentStore
     @EnvironmentObject var notif: NotificationManager
     @State private var tab = 0
@@ -36,6 +37,9 @@ struct MainTabView: View {
         .fullScreenCover(item: $emergencyCase) { c in
             CaseFlow(clinicalCase: c)
         }
+        // Commiserate after a setback (lost streak / league demotion). Shown once;
+        // queued behind any case cover so it appears when the player is back here.
+        .sheet(item: $app.pendingSetback) { SetbackSheet(info: $0) }
     }
 }
 

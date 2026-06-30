@@ -47,6 +47,9 @@ final class AppState: ObservableObject {
     @Published private(set) var streakFreezes: Int     { didSet { defaults.set(streakFreezes, forKey: K.freezes) } }
     /// GMT days the user was active — drives the streak calendar.
     @Published private(set) var activeDays: Set<Int>   { didSet { defaults.set(Array(activeDays), forKey: K.activeDays) } }
+    /// A pending "setback" (lost streak / league demotion) to commiserate with
+    /// the player. Transient — surfaced once as a sheet, then cleared. Not saved.
+    @Published var pendingSetback: SetbackInfo? = nil
     /// The GMT day Life was last refilled — drives the daily reset.
     @Published private(set) var lastLifeDay: Int { didSet { defaults.set(lastLifeDay, forKey: K.lifeDay) } }
     /// Timestamp from which energy has been regenerating (whole units only; the
@@ -284,6 +287,18 @@ final class AppState: ObservableObject {
         return reward
     }
 
+    /// Apply last week's finish when it lands in the demotion zone (the bottom
+    /// `leagueDemotionCount`): drop one tier (Bronze is the floor) and return a
+    /// setback to commiserate. Returns nil if they finished in a safe rank.
+    func applyLeagueDemotion(rank: Int) -> SetbackInfo? {
+        let safeThrough = Seed.leagueSize - Seed.leagueDemotionCount   // ranks 1…20 stay
+        guard rank > safeThrough else { return nil }
+        let from = league
+        let dropped = from.rawValue > 0
+        if dropped { leagueTier = from.rawValue - 1 }                  // demote (Bronze stays)
+        return .demoted(to: league, dropped: dropped)
+    }
+
     /// Mark that we've processed league results up to (and including) `week`.
     func markLeagueResultProcessed(week: Int) {
         if week > lastLeagueResultWeek { lastLeagueResultWeek = week }
@@ -414,6 +429,7 @@ final class AppState: ObservableObject {
                 streakFreezes -= missed                     // freezes save the streak
                 streak += 1
             } else {
+                if streak > 0 { pendingSetback = .streakLost(streak) }   // commiserate the loss
                 streak = 1                                  // streak broken
             }
         }

@@ -399,9 +399,12 @@ struct LeaguesView: View {
         guard week > app.lastLeagueResultWeek else { return }
         let prevWeek = week - 1
         let members = await SupabaseService.shared.fetchLeague(week: prevWeek)
-        if let me = members.first(where: { $0.player_id == SupabaseService.shared.userId }),
-           let reward = app.applyLeagueResult(rank: me.rank) {
-            promotion = reward
+        if let me = members.first(where: { $0.player_id == SupabaseService.shared.userId }) {
+            if let reward = app.applyLeagueResult(rank: me.rank) {
+                promotion = reward                              // promoted → celebrate
+            } else if let setback = app.applyLeagueDemotion(rank: me.rank) {
+                app.pendingSetback = setback                    // demoted → commiserate
+            }
         }
         app.markLeagueResultProcessed(week: week)
     }
