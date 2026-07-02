@@ -48,12 +48,15 @@ struct TopBar: View {
     @EnvironmentObject var app: AppState
     @State private var showPro = false
     @State private var showStreak = false
+    @State private var showShop = false
     /// Ticks energy regeneration while the app is open.
     private let energyTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     var body: some View {
         HStack(spacing: 10) {
             EnergyBar(value: app.life, max: AppState.maxLife, showsLabel: false)
-            resource("dollarsign.circle.fill", "\(app.coins)", CX.gold)
+            Button { showShop = true } label: {
+                resource("dollarsign.circle.fill", "\(app.coins)", CX.gold)
+            }
             Spacer(minLength: 8)
             Button { showStreak = true } label: {
                 resource("flame.fill", "\(app.streak)", .orange)
@@ -67,6 +70,7 @@ struct TopBar: View {
         .padding(.horizontal, 16).padding(.vertical, 10)
         .sheet(isPresented: $showPro) { GoProSheet() }
         .sheet(isPresented: $showStreak) { StreakView() }
+        .sheet(isPresented: $showShop) { CortexShop() }
         .onAppear { app.refreshForNewDay() }
         .onReceive(energyTimer) { _ in app.regenerateEnergy() }
     }

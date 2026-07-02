@@ -55,6 +55,7 @@ enum League: Int, CaseIterable, Codable {
 struct LeagueReward {
     let rank: Int
     let league: League   // the league the player is in after this result
+    let coins: Int       // flat weekly coin reward (top-3 vs rest of promotion zone)
 
     /// Rank weight: 1st earns most, tapering through the promotion zone.
     private var rankBase: Int {
@@ -66,6 +67,5 @@ struct LeagueReward {
         }
     }
 
-    var coins: Int { rankBase * league.tierLevel * 10 }
-    var xp: Int    { rankBase * league.tierLevel }
+    var xp: Int { rankBase * league.tierLevel }
 }

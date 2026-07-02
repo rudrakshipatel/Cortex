@@ -277,14 +277,23 @@ final class AppState: ObservableObject {
     /// XP scaled by rank and the new league. Returns the reward to celebrate, or
     /// nil if they didn't promote. Caller passes the player's final rank.
     func applyLeagueResult(rank: Int) -> LeagueReward? {
-        guard rank >= 1, rank <= Seed.leaguePromotionCount else { return nil }
-        let from = league
-        if let next = from.next { leagueTier = next.rawValue }   // promote (Diamond stays)
-        if rank <= 3 { topThreeFinishes += 1 }
-        let reward = LeagueReward(rank: rank, league: league)
-        coins += reward.coins
-        lifetimeXP += reward.xp
-        return reward
+        guard rank >= 1 else { return nil }
+        if rank <= Seed.leaguePromotionCount {
+            // Promotion zone → move up a tier and earn coins (top 3 earn the most).
+            let from = league
+            if let next = from.next { leagueTier = next.rawValue }   // promote (Diamond stays)
+            if rank <= 3 { topThreeFinishes += 1 }
+            let award = rank <= 3 ? Seed.leagueTopThreeReward : Seed.leaguePromotionReward
+            coins += award
+            let reward = LeagueReward(rank: rank, league: league, coins: award)
+            lifetimeXP += reward.xp
+            return reward
+        }
+        // Safe zone (middle) → stay in the league and earn a small coin reward.
+        if rank <= Seed.leagueSize - Seed.leagueDemotionCount {
+            coins += Seed.leagueSafeReward
+        }
+        return nil   // demotion (bottom zone) is handled by applyLeagueDemotion
     }
 
     /// Apply last week's finish when it lands in the demotion zone (the bottom
@@ -376,7 +385,16 @@ final class AppState: ObservableObject {
     func markCaseSolved(_ id: UUID, specialty: String = "") {
         let (inserted, _) = solvedCaseIDs.insert(id.uuidString)
         let sp = specialty.trimmingCharacters(in: .whitespacesAndNewlines)
-        if inserted, !sp.isEmpty { specialtySolved[sp, default: 0] += 1 }
+        guard inserted, !sp.isEmpty else { return }
+        let n = (specialtySolved[sp] ?? 0) + 1
+        specialtySolved[sp] = n
+        // Mastery-trophy coin reward, paid once as each tier is reached.
+        switch n {
+        case Self.bronzeMastery: coins += Self.bronzeTrophyReward
+        case Self.silverMastery: coins += Self.silverTrophyReward
+        case Self.goldMastery:   coins += Self.goldTrophyReward
+        default: break
+        }
     }
 
     // MARK: Specialty mastery trophies (count of solved cases per specialty)
@@ -385,6 +403,8 @@ final class AppState: ObservableObject {
     static let bronzeMastery = 10, silverMastery = 60, goldMastery = 160
     /// Segment sizes shown on the per-specialty progress chips.
     static let bronzeSegment = 10, silverSegment = 50, goldSegment = 100
+    /// Coins paid once when a specialty reaches each mastery trophy tier.
+    static let bronzeTrophyReward = 500, silverTrophyReward = 1000, goldTrophyReward = 1000
 
     /// Highest mastery trophy reached in a specialty: 3 = Gold, 2 = Silver, 1 = Bronze, 0 = none.
     func masteryTier(_ specialty: String) -> Int {
@@ -435,20 +455,37 @@ final class AppState: ObservableObject {
         }
         lastActiveEpochDay = today
         activeDays.insert(today)
-        if streak > highestStreak { highestStreak = streak }   // track the record
-        // Milestone reward: every 50-day streak pays 10 coins per streak day
-        // (50 days → 500, 100 days → 1000, …).
-        if streak > 0 && streak % 50 == 0 { coins += 10 * streak }
+        let brokeRecord = streak > highestStreak
+        if brokeRecord { highestStreak = streak }              // track the record
+        // Daily-activity coin rewards (see Cortex Shop → How to Earn Coins).
+        if streak > 0 {
+            coins += 100                                        // completed today's daily streak
+            if brokeRecord && streak > 1 { coins += 500 }       // broke your highest-ever streak
+            if streak % 10 == 0 { coins += 500 }                // every 10-day streak milestone
+        }
     }
 
-    // MARK: Shop / Streak Freeze
-    static let streakFreezeCost = 1000
-    /// Buy one Streak Freeze with coins. Returns false if too few coins.
+    // MARK: Shop
+    static let streakFreezeCost = 1000       // per Streak Freeze
+    static let xpPackAmount = 50             // XP granted per XP pack
+    static let xpPackCost = 1000             // coin cost of one XP pack
+
+    /// Buy `count` Streak Freezes with coins. Returns false if too few coins.
     @discardableResult
-    func buyStreakFreeze() -> Bool {
-        guard coins >= Self.streakFreezeCost else { return false }
-        coins -= Self.streakFreezeCost
-        streakFreezes += 1
+    func buyStreakFreeze(count: Int = 1) -> Bool {
+        let cost = Self.streakFreezeCost * count
+        guard count > 0, coins >= cost else { return false }
+        coins -= cost
+        streakFreezes += count
+        return true
+    }
+
+    /// Buy one XP pack (adds `xpPackAmount` XP) with coins. Returns false if too few coins.
+    @discardableResult
+    func buyXP() -> Bool {
+        guard coins >= Self.xpPackCost else { return false }
+        coins -= Self.xpPackCost
+        award(xp: Self.xpPackAmount)
         return true
     }
 
