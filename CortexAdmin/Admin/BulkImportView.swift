@@ -33,7 +33,7 @@ struct BulkImportView: View {
             } header: {
                 Text("Paste JSON")
             } footer: {
-                Text("A JSON object with \"clinical\", \"daily\" (each with a \"date\") and/or \"emergencies\" (each with a \"sendAt\") arrays. Each case uses \"presentation\", \"history\" and \"examination\" sections (Chief Complaint → History → Physical Examination). IDs are generated automatically.")
+                Text("A JSON object with \"clinical\", \"daily\" (each with a \"date\") and/or \"emergencies\" (each with a \"sendAt\") arrays. Each case uses \"presentation\", \"history\" and \"examination\" sections (Chief Complaint → History → Physical Examination), and an optional \"mentorInsight\" object (reasoning, differentials, testRationale, treatmentSequencing, pearls, pitfalls, learningPoints). IDs are generated automatically.")
             }
 
             Section {
@@ -190,7 +190,16 @@ enum JSONTemplates {
           ],
           "outcomeTitle": "Nailed it!",
           "outcomeBody": "Extensor silvery plaques is classic psoriasis.",
-          "xpReward": 20
+          "xpReward": 20,
+          "mentorInsight": {
+            "reasoning": "Core clinical insights — how the diagnosis was reached.",
+            "differentials": "Why the other diagnoses didn't fit.",
+            "testRationale": "Why these tests were the right ones to order.",
+            "treatmentSequencing": "Treatment priorities and the order to start them.",
+            "pearls": "Clinical pearls worth remembering.",
+            "pitfalls": "Clinical traps to avoid.",
+            "learningPoints": "Key learning points from this case."
+          }
         }
       ]
     }
@@ -230,7 +239,16 @@ enum JSONTemplates {
             ],
             "outcomeTitle": "Sharp call!",
             "outcomeBody": "ST elevation in the inferior leads is a STEMI needing urgent PCI.",
-            "xpReward": 25
+            "xpReward": 25,
+            "mentorInsight": {
+              "reasoning": "Core clinical insights — how the diagnosis was reached.",
+              "differentials": "Why the other diagnoses didn't fit.",
+              "testRationale": "Why these tests were the right ones to order.",
+              "treatmentSequencing": "Treatment priorities and the order to start them.",
+              "pearls": "Clinical pearls worth remembering.",
+              "pitfalls": "Clinical traps to avoid.",
+              "learningPoints": "Key learning points from this case."
+            }
           }
         }
       ]
@@ -269,7 +287,16 @@ enum JSONTemplates {
             ],
             "outcomeTitle": "Life saved!",
             "outcomeBody": "Naloxone reverses opioid-induced respiratory depression.",
-            "xpReward": 30
+            "xpReward": 30,
+            "mentorInsight": {
+              "reasoning": "Core clinical insights — how the diagnosis was reached.",
+              "differentials": "Why the other diagnoses didn't fit.",
+              "testRationale": "Why these tests were the right ones to order.",
+              "treatmentSequencing": "Treatment priorities and the order to start them.",
+              "pearls": "Clinical pearls worth remembering.",
+              "pitfalls": "Clinical traps to avoid.",
+              "learningPoints": "Key learning points from this case."
+            }
           }
         }
       ]
