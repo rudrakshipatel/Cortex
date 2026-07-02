@@ -177,10 +177,12 @@ struct CaseEditor<Header: View>: View {
             }
 
             Section {
-                TextField("Expert reasoning", text: $draft.mReasoning, axis: .vertical).lineLimit(2...6)
-                TextField("Differential diagnoses", text: $draft.mDifferentials, axis: .vertical).lineLimit(2...6)
+                TextField("Core clinical insights", text: $draft.mReasoning, axis: .vertical).lineLimit(2...6)
+                TextField("Why other diagnoses didn't fit", text: $draft.mDifferentials, axis: .vertical).lineLimit(2...6)
+                TextField("Test selection rationale", text: $draft.mTestRationale, axis: .vertical).lineLimit(2...6)
+                TextField("Treatment priorities & sequencing", text: $draft.mTreatmentSequencing, axis: .vertical).lineLimit(2...6)
                 TextField("Clinical pearls", text: $draft.mPearls, axis: .vertical).lineLimit(2...6)
-                TextField("Common pitfalls", text: $draft.mPitfalls, axis: .vertical).lineLimit(2...6)
+                TextField("Clinical traps to avoid", text: $draft.mPitfalls, axis: .vertical).lineLimit(2...6)
                 TextField("Learning points", text: $draft.mLearning, axis: .vertical).lineLimit(2...6)
             } header: {
                 Text("Mentor Insight (coin-locked)")
@@ -234,6 +236,8 @@ struct CaseDraft {
     // Mentor Insight (coin-locked teaching shown on the answer screen)
     var mReasoning = ""
     var mDifferentials = ""
+    var mTestRationale = ""
+    var mTreatmentSequencing = ""
     var mPearls = ""
     var mPitfalls = ""
     var mLearning = ""
@@ -277,6 +281,7 @@ struct CaseDraft {
         xp = c.xpReward
         if let mi = c.mentorInsight {
             mReasoning = mi.reasoning; mDifferentials = mi.differentials
+            mTestRationale = mi.testRationale; mTreatmentSequencing = mi.treatmentSequencing
             mPearls = mi.pearls; mPitfalls = mi.pitfalls; mLearning = mi.learningPoints
         }
     }
@@ -328,6 +333,8 @@ struct CaseDraft {
 
     private func mentorInsight() -> MentorInsightContent? {
         let mi = MentorInsightContent(reasoning: mReasoning.trimmed, differentials: mDifferentials.trimmed,
+                                      testRationale: mTestRationale.trimmed,
+                                      treatmentSequencing: mTreatmentSequencing.trimmed,
                                       pearls: mPearls.trimmed, pitfalls: mPitfalls.trimmed,
                                       learningPoints: mLearning.trimmed)
         return mi.isEmpty ? nil : mi

@@ -619,20 +619,49 @@ struct RemoteRef: Codable, Equatable {
 
 /// Coin-locked expert teaching attached to a case (shown on the answer screen).
 struct MentorInsightContent: Codable, Equatable {
-    var reasoning: String = ""        // expert reasoning
-    var differentials: String = ""    // differential diagnoses
-    var pearls: String = ""           // clinical pearls
-    var pitfalls: String = ""         // common pitfalls
-    var learningPoints: String = ""   // learning points
+    var reasoning: String = ""            // core clinical insights / expert reasoning
+    var differentials: String = ""        // why other diagnoses didn't fit
+    var testRationale: String = ""        // test selection rationale
+    var treatmentSequencing: String = ""  // treatment priorities & sequencing
+    var pearls: String = ""               // clinical pearls
+    var pitfalls: String = ""             // clinical traps to avoid
+    var learningPoints: String = ""       // learning points
+
+    init(reasoning: String = "", differentials: String = "", testRationale: String = "",
+         treatmentSequencing: String = "", pearls: String = "", pitfalls: String = "",
+         learningPoints: String = "") {
+        self.reasoning = reasoning
+        self.differentials = differentials
+        self.testRationale = testRationale
+        self.treatmentSequencing = treatmentSequencing
+        self.pearls = pearls
+        self.pitfalls = pitfalls
+        self.learningPoints = learningPoints
+    }
+
+    // Tolerant decoding: older stored payloads predate the newer keys, so every
+    // field is optional-with-default and existing content still decodes cleanly.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func str(_ k: CodingKeys) -> String { ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil) ?? "" }
+        reasoning = str(.reasoning)
+        differentials = str(.differentials)
+        testRationale = str(.testRationale)
+        treatmentSequencing = str(.treatmentSequencing)
+        pearls = str(.pearls)
+        pitfalls = str(.pitfalls)
+        learningPoints = str(.learningPoints)
+    }
 
     var isEmpty: Bool {
-        [reasoning, differentials, pearls, pitfalls, learningPoints]
+        [reasoning, differentials, testRationale, treatmentSequencing, pearls, pitfalls, learningPoints]
             .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
     /// Non-empty (title, body) sections in display order.
     var sections: [(String, String)] {
-        [("Expert reasoning", reasoning), ("Differential diagnoses", differentials),
-         ("Clinical pearls", pearls), ("Common pitfalls", pitfalls),
+        [("Core clinical insights", reasoning), ("Why other diagnoses didn't fit", differentials),
+         ("Test selection rationale", testRationale), ("Treatment priorities & sequencing", treatmentSequencing),
+         ("Clinical pearls", pearls), ("Clinical traps to avoid", pitfalls),
          ("Learning points", learningPoints)]
             .filter { !$0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }

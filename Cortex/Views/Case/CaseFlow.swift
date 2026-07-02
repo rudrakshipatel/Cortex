@@ -152,7 +152,7 @@ struct CaseFlow: View {
             parts.append(session.solved ? c.outcomeTitle : "Every expert starts here.")
             parts.append(c.outcomeBody)
         }
-        if app.isPro {
+        if session.mentorUnlocked {
             let hints = c.infoCards.map(\.mentor) + c.tests.map(\.mentor)
             parts.append(contentsOf: hints.filter { !$0.isEmpty }.map { "Mentor insight: \($0)" })
         }
@@ -626,7 +626,7 @@ private struct OutcomeStep: View {
     @ObservedObject var session: CaseSession
     @EnvironmentObject var app: AppState
     var onDone: () -> Void
-    @State private var showPro = false
+    @State private var confirmMentor = false
     @State private var signingIn = false
 
     /// Overall verdict for the SOLVED badge + celebratory narrative: the attempt
@@ -642,8 +642,10 @@ private struct OutcomeStep: View {
         func add(_ icon: String, _ color: Color, _ title: String, _ text: String) {
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { out.append((icon, color, title, text)) }
         }
-        add("questionmark.circle.fill", CX.orange, "How We Landed on the Diagnosis", mi.reasoning)
-        add("list.bullet.rectangle.fill", CX.teal, "Why Other Diagnoses Didn't Fit", mi.differentials)
+        add("brain.head.profile", CX.teal, "Core Clinical Insights", mi.reasoning)
+        add("list.bullet.rectangle.fill", CX.orange, "Why Other Diagnoses Didn't Fit", mi.differentials)
+        add("syringe.fill", CX.gold, "Test Selection Rationale", mi.testRationale)
+        add("pills.fill", CX.teal, "Treatment Priorities & Sequencing", mi.treatmentSequencing)
         add("sparkles", CX.gold, "Clinical Pearls", mi.pearls)
         add("exclamationmark.triangle.fill", CX.orange, "Clinical Traps to Avoid", mi.pitfalls)
         add("graduationcap.fill", CX.teal, "Learning Points", mi.learningPoints)
@@ -759,13 +761,14 @@ private struct OutcomeStep: View {
                 // Case review — how the player's tests / diagnosis / treatment went
                 CaseReviewCard(session: session)
 
-                // Clinical insights breakdown — a Pro feature. Pro users get the
-                // full teaching; free users see every section, but locked.
+                // Learning breakdown (coin-locked, collapsible)
                 if !learningSections.isEmpty {
-                    if !app.isPro { proInsightsBanner }
-                    ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
-                        CollapsibleInsight(icon: sec.icon, color: sec.color, title: sec.title,
-                                           text: sec.body, locked: !app.isPro) { showPro = true }
+                    if session.mentorUnlocked {
+                        ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
+                            CollapsibleInsight(icon: sec.icon, color: sec.color, title: sec.title, text: sec.body)
+                        }
+                    } else {
+                        lockedBreakdown
                     }
                 }
 
@@ -783,7 +786,6 @@ private struct OutcomeStep: View {
         .overlay(alignment: .top) {
             if correct { ConfettiBurst().padding(.top, 50) }
         }
-        .sheet(isPresented: $showPro) { GoProSheet() }
     }
 
     @ViewBuilder private var badge: some View {
@@ -811,60 +813,58 @@ private struct OutcomeStep: View {
         }
     }
 
-    /// Prominent "this is a Pro feature" banner shown above the (locked) insight
-    /// sections for free users — the counterpart to the video's Core Clinical
-    /// Insights card. Tapping Upgrade opens the Go Pro screen.
-    private var proInsightsBanner: some View {
-        CXCard(borderColor: CX.teal.opacity(0.5)) {
+    /// Locked teaser for the structured breakdown, unlocked with coins. Lists
+    /// every insight tile (Core Clinical Insights, Why Other Diagnoses Didn't
+    /// Fit, Test Selection Rationale, Treatment Priorities & Sequencing, Clinical
+    /// Traps, Learning Points, …) so free users can see what unlocking reveals.
+    private var lockedBreakdown: some View {
+        let canAfford = app.coins >= AppState.mentorCost
+        return CXCard(borderColor: CX.orange.opacity(0.5)) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles").foregroundStyle(CX.teal)
-                    Text("Core Clinical Insights").font(CX.heading(17)).foregroundStyle(CX.teal)
+                HStack {
+                    Image(systemName: "graduationcap.fill").foregroundStyle(CX.orange)
+                    Text("Full Case Breakdown").font(CX.heading(18)).foregroundStyle(CX.navy)
                     Spacer()
                     Image(systemName: "lock.fill").foregroundStyle(CX.navySoft)
                 }
-                Text("This content is part of Pro.").font(CX.title(22)).foregroundStyle(CX.orange)
-                Text("Free lets you explore the basics. Pro unlocks the full clinical experience.")
-                    .font(CX.body(15)).foregroundStyle(CX.navy)
-                    .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 8) {
-                    proBullet("Expert reasoning on every case")
-                    proBullet("Why the other diagnoses didn't fit")
-                    proBullet("Test & treatment rationale")
-                    proBullet("Clinical traps and learning points")
-                }
-                Button { showPro = true } label: {
+                ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
                     HStack(spacing: 8) {
-                        Text("Upgrade to Pro"); Image(systemName: "arrow.right")
+                        Image(systemName: sec.icon).foregroundStyle(sec.color.opacity(0.6))
+                        Text(sec.title).font(CX.body(15)).foregroundStyle(CX.navySoft)
+                        Spacer()
                     }
-                    .font(CX.heading(16)).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).padding(.vertical, 12)
-                    .background(CX.orangeButton, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .buttonStyle(PressStyle())
+                Button { confirmMentor = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: canAfford ? "dollarsign.circle.fill" : "xmark.circle.fill")
+                        Text(canAfford ? "Unlock · \(AppState.mentorCost) coins" : "Need \(AppState.mentorCost) coins")
+                    }
+                    .font(CX.label(14)).foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(canAfford ? AnyShapeStyle(CX.orangeButton) : AnyShapeStyle(CX.navySoft), in: Capsule())
+                }
+                .buttonStyle(PressStyle()).disabled(!canAfford)
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private func proBullet(_ t: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(CX.teal)
-            Text(t).font(CX.body(14)).foregroundStyle(CX.navySoft)
-                .fixedSize(horizontal: false, vertical: true)
+        .confirmationDialog("Unlock the full breakdown?", isPresented: $confirmMentor, titleVisibility: .visible) {
+            Button("Unlock for \(AppState.mentorCost) coins") {
+                if app.spendCoins(AppState.mentorCost) {
+                    withAnimation(.spring(duration: 0.35)) { session.mentorUnlocked = true }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This spends \(AppState.mentorCost) coins (you have \(app.coins)) to reveal the expert teaching for this case.")
         }
     }
 }
 
-/// An expandable insight card used on the outcome screen. When `locked` (a free
-/// user), the section header still shows but expanding reveals a Pro upsell
-/// instead of the teaching, so free users can see everything Pro would unlock.
+/// An expandable insight card used on the outcome screen (shown once unlocked).
 private struct CollapsibleInsight: View {
     let icon: String
     let color: Color
     let title: String
     let text: String
-    var locked: Bool = false
-    var onUpgrade: (() -> Void)? = nil
     @State private var open = false
 
     var body: some View {
@@ -872,37 +872,17 @@ private struct CollapsibleInsight: View {
             VStack(alignment: .leading, spacing: 10) {
                 Button { withAnimation(.easeInOut(duration: 0.2)) { open.toggle() } } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: icon).foregroundStyle(locked ? color.opacity(0.6) : color)
+                        Image(systemName: icon).foregroundStyle(color)
                         Text(title).font(CX.heading(16)).foregroundStyle(CX.navy)
                             .multilineTextAlignment(.leading)
                         Spacer()
-                        Image(systemName: locked ? "lock.fill"
-                              : (open ? "chevron.up.circle.fill" : "chevron.down.circle.fill"))
-                            .foregroundStyle(locked ? CX.orange : CX.navySoft)
+                        Image(systemName: open ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
+                            .foregroundStyle(CX.navySoft)
                     }
                 }
                 if open {
-                    if locked {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("This content is part of Pro.")
-                                .font(CX.heading(15)).foregroundStyle(CX.orange)
-                            Text("Upgrade to unlock the full reasoning for this case.")
-                                .font(CX.body(14)).foregroundStyle(CX.navySoft)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button { onUpgrade?() } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "crown.fill"); Text("Upgrade to Pro")
-                                }
-                                .font(CX.label(14)).foregroundStyle(.white)
-                                .padding(.horizontal, 16).padding(.vertical, 9)
-                                .background(CX.orangeButton, in: Capsule())
-                            }
-                            .buttonStyle(PressStyle())
-                        }
-                    } else {
-                        Text(text).font(CX.body(15)).foregroundStyle(CX.navySoft)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text(text).font(CX.body(15)).foregroundStyle(CX.navySoft)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
