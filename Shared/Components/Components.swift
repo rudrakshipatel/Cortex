@@ -202,43 +202,23 @@ struct MentorCard: View {
     }
 }
 
-/// Mentor insight that must be unlocked with XP. Once unlocked for the case it
-/// reveals every mentor hint in that case (`session.mentorUnlocked`).
+/// Dr. Vix's in-case hint — a Cortex Pro feature. Pro players see the hint;
+/// free players see it locked (upgrade via GO PRO in the top bar).
 struct MentorInsight: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var session: CaseSession
     var text: String
-    @State private var confirm = false
 
     var body: some View {
-        Group {
-            if session.mentorUnlocked {
-                MentorCard(text: text)
-            } else {
-                LockedMentorCard(cost: AppState.mentorCost,
-                                 canAfford: app.coins >= AppState.mentorCost) {
-                    confirm = true   // ask before spending
-                }
-            }
-        }
-        .confirmationDialog("Unlock Mentor Insight?", isPresented: $confirm, titleVisibility: .visible) {
-            Button("Unlock for \(AppState.mentorCost) coins") {
-                if app.spendCoins(AppState.mentorCost) {
-                    withAnimation(.spring(duration: 0.35)) { session.mentorUnlocked = true }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This spends \(AppState.mentorCost) coins (you have \(app.coins)) to reveal Dr. Vix's hints for this case.")
+        if app.isPro {
+            MentorCard(text: text)
+        } else {
+            ProLockedMentorCard()
         }
     }
 }
 
-private struct LockedMentorCard: View {
-    var cost: Int
-    var canAfford: Bool
-    var onUnlock: () -> Void
-
+private struct ProLockedMentorCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
@@ -248,21 +228,14 @@ private struct LockedMentorCard: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("MENTOR INSIGHT").font(CX.label(11)).foregroundStyle(CX.orange)
-                Text("Spend \(cost) coins to reveal Dr. Vix's hint for this case.")
+                Text("Dr. Vix's hints are a Cortex Pro feature. Go Pro to unlock them on every case.")
                     .font(CX.body(14)).foregroundStyle(CX.navySoft)
                     .fixedSize(horizontal: false, vertical: true)
-                Button(action: onUnlock) {
-                    HStack(spacing: 6) {
-                        Image(systemName: canAfford ? "dollarsign.circle.fill" : "xmark.circle.fill")
-                        Text(canAfford ? "Unlock · \(cost) coins" : "Need \(cost) coins")
-                    }
-                    .font(CX.label(13)).foregroundStyle(.white)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(canAfford ? AnyShapeStyle(CX.orangeButton) : AnyShapeStyle(CX.navySoft),
-                                in: Capsule())
+                HStack(spacing: 6) {
+                    Image(systemName: "crown.fill").font(.system(size: 12))
+                    Text("Cortex Pro").font(CX.label(12).weight(.bold))
                 }
-                .buttonStyle(PressStyle())
-                .disabled(!canAfford)
+                .foregroundStyle(CX.teal)
             }
             Spacer(minLength: 0)
         }

@@ -607,16 +607,6 @@ final class AppState: ObservableObject {
     static let casesToQualify = 1
     /// True once the user has finished at least one case this league week.
     var qualifiedForLeague: Bool { leagueCasesThisWeek >= Self.casesToQualify }
-
-    /// Coin cost to reveal a case's mentor insights.
-    static let mentorCost = 300
-
-    /// Spend coins (e.g., to unlock mentor insights). Returns false if insufficient.
-    func spendCoins(_ amount: Int) -> Bool {
-        guard coins >= amount else { return false }
-        coins -= amount
-        return true
-    }
 }
 
 // MARK: - Departments (home list)
@@ -843,7 +833,6 @@ final class CaseSession: ObservableObject {
     @Published var tray: [TestOption] = []
     @Published var pickedDiagnosis: DiagnosisOption?
     @Published var treatmentTray: [TreatmentOption] = []
-    @Published var mentorUnlocked = false
     /// Server cases are scored remotely; this flips true once the result is in
     /// (or grading failed). The outcome screen waits on it before revealing.
     @Published private(set) var revealed = false
