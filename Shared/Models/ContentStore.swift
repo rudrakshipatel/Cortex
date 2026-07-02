@@ -100,24 +100,29 @@ final class ContentStore: ObservableObject {
 
     /// Make the local cache mirror the authoritative server content. The freshly
     /// fetched `clinical` / `daily` cases each carry their server `remote` id.
-    /// Cases still present on the server keep their existing *local* id (so the
-    /// player's solved-state and in-flight selection stay stable); cases that
-    /// were deleted on the server disappear here too; brand-new cases are added.
-    /// Call this only with a successful fetch — never on a network failure, or
-    /// it would wrongly wipe everything.
+    /// For a case still on the server we take the FRESH content (so admin edits
+    /// show up) but reuse its existing *local* id, so the player's solved-state
+    /// and in-flight selection stay stable. Cases deleted on the server disappear
+    /// here too; brand-new cases are added. Call this only with a successful
+    /// fetch — never on a network failure, or it would wrongly wipe everything.
     func setServerContent(clinical fresh: [ClinicalCase], daily freshDaily: [DailyCase]) {
-        var existing: [String: ClinicalCase] = [:]
-        for c in clinicalCases { if let rid = c.remote?.id { existing[rid] = c } }
+        var existingID: [String: UUID] = [:]
+        for c in clinicalCases { if let rid = c.remote?.id { existingID[rid] = c.id } }
         clinicalCases = fresh.map { f in
-            if let rid = f.remote?.id, let keep = existing[rid] { return keep }
-            return f
+            var updated = f
+            if let rid = f.remote?.id, let localID = existingID[rid] { updated.id = localID }
+            return updated
         }
 
-        var existingDaily: [String: DailyCase] = [:]
-        for d in dailyCases { if let rid = d.clinicalCase.remote?.id { existingDaily[rid] = d } }
+        var existingDailyID: [String: (day: UUID, cse: UUID)] = [:]
+        for d in dailyCases { if let rid = d.clinicalCase.remote?.id { existingDailyID[rid] = (d.id, d.clinicalCase.id) } }
         dailyCases = freshDaily.map { f in
-            if let rid = f.clinicalCase.remote?.id, let keep = existingDaily[rid] { return keep }
-            return f
+            var updated = f
+            if let rid = f.clinicalCase.remote?.id, let ids = existingDailyID[rid] {
+                updated.id = ids.day
+                updated.clinicalCase.id = ids.cse
+            }
+            return updated
         }
         save()
     }
