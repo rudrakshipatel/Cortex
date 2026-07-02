@@ -140,6 +140,13 @@ private struct AuthScreen: View {
                         .multilineTextAlignment(.center)
                 }
 
+                Button("Continue without an account") { onDone() }
+                    .font(CX.heading(15)).foregroundStyle(CX.navySoft)
+                    .disabled(working != nil)
+                Text("You can play right away and sign in later to save your progress across devices.")
+                    .font(CX.label(11)).foregroundStyle(CX.navySoft)
+                    .multilineTextAlignment(.center)
+
                 Text("By continuing, you agree to our terms & privacy policy")
                     .font(CX.label(12)).foregroundStyle(CX.navySoft)
                     .multilineTextAlignment(.center)
@@ -184,7 +191,7 @@ private struct AuthScreen: View {
 }
 
 // MARK: - 2b. Email sign-in (6-digit code)
-private struct EmailSignInSheet: View {
+struct EmailSignInSheet: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var sb: SupabaseService
     @Environment(\.dismiss) private var dismiss

@@ -62,8 +62,8 @@ struct RootView: View {
         Group {
             if let key = ProcessInfo.processInfo.environment["CX_SCREEN"], !key.isEmpty {
                 DebugRouter(key: key)                 // verification-only, off in production
-            } else if !sb.isSignedIn {
-                OnboardingFlow(startAt: .intro)       // account-first: sign-in required
+            } else if !sb.isSignedIn && !app.onboarded {
+                OnboardingFlow(startAt: .intro)       // first run: sign-in is optional (can skip)
             } else if app.isSyncing {
                 SyncingScreen()                       // loading this account's cloud profile
             } else if !app.onboarded {

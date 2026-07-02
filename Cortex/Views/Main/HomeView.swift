@@ -719,6 +719,7 @@ struct MeView: View {
     @State private var confirmDelete = false
     @State private var deleting = false
     @State private var deleteError: String?
+    @State private var showSignIn = false
     @State private var infoPage: InfoPageKind?
     @Environment(\.openURL) private var openURL
 
@@ -815,6 +816,7 @@ struct MeView: View {
         .alert("Delete Account", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
             Button("OK") {}
         } message: { Text(deleteError ?? "") }
+        .sheet(isPresented: $showSignIn) { EmailSignInSheet() }
         .overlay {
             if deleting {
                 ZStack {
@@ -887,10 +889,11 @@ struct MeView: View {
             settingsRow("lock.shield.fill", "Privacy Policy") { infoPage = .privacy }
             settingsRow("questionmark.circle.fill", "FAQs") { infoPage = .faqs }
             settingsRow("envelope.fill", "Facing a Problem? Contact Us") { infoPage = .support }
-            settingsRow("rectangle.portrait.and.arrow.right.fill", "Logout", tint: CX.orange,
-                        last: !SupabaseService.shared.isSignedIn) { confirmLogout = true }
             if SupabaseService.shared.isSignedIn {
+                settingsRow("rectangle.portrait.and.arrow.right.fill", "Logout", tint: CX.orange, last: false) { confirmLogout = true }
                 settingsRow("trash.fill", "Delete Account", tint: .red, last: true) { confirmDelete = true }
+            } else {
+                settingsRow("person.crop.circle.badge.plus", "Sign In / Save Progress", tint: CX.teal, last: true) { showSignIn = true }
             }
         }
         .background(CX.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
