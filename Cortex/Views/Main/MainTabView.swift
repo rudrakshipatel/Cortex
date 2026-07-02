@@ -147,6 +147,7 @@ struct GoProSheet: View {
                     } else {
                         planPicker
                         subscribeButton
+                        redeemCouponButton
                         Button("Restore Purchases") { Task { await restore() } }
                             .font(CX.label(14)).foregroundStyle(CX.teal).disabled(working)
                         Text("Auto-renewable subscription. Cancel anytime in Settings. Payment is charged to your Apple ID.")
@@ -238,6 +239,27 @@ struct GoProSheet: View {
         .buttonStyle(PressStyle())
         .disabled(working || store.plans.isEmpty)
         .opacity(store.plans.isEmpty ? 0.5 : 1)
+    }
+
+    /// Opens Apple's offer-code redemption sheet (Option A). After the user
+    /// redeems, RevenueCat's customerInfo stream flips `isPro` and this sheet
+    /// switches to the "You're Pro" state automatically.
+    private var redeemCouponButton: some View {
+        VStack(spacing: 5) {
+            Button { store.redeemCode() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "ticket.fill")
+                    Text("Redeem a coupon code")
+                }
+                .font(CX.heading(16)).foregroundStyle(CX.orange)
+                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(CX.orange, lineWidth: 2))
+            }
+            .buttonStyle(PressStyle())
+            Text("Got a coupon? Redeem it for a free month of Pro.")
+                .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+        }
     }
 
     private var cancelled: Bool { store.isPro && !store.proWillRenew }
