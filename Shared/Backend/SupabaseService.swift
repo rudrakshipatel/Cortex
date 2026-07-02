@@ -330,6 +330,15 @@ final class SupabaseService: ObservableObject {
         ]
         if let dxIdx { args["p_dx_idx"] = dxIdx }
         if let dxName { args["p_dx_name"] = dxName }
+        // Prefer name-based grading. If the database hasn't been migrated to the
+        // name-aware grade_case yet, that call 404s — fall back to index-only so
+        // grading still works everywhere.
+        if let r = await callGrade(args, ref: ref) { return r }
+        for k in ["p_test_names", "p_tx_names", "p_dx_name"] { args.removeValue(forKey: k) }
+        return await callGrade(args, ref: ref)
+    }
+
+    private func callGrade(_ args: [String: Any], ref: RemoteRef) async -> GradeResult? {
         guard let body = try? JSONSerialization.data(withJSONObject: args),
               let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/grade_case",
                                               body: body, player: true),
