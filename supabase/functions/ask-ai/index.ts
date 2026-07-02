@@ -49,9 +49,24 @@ async function askOpenAI(system: string, history: ChatMessage[]): Promise<string
       messages: [{ role: "system", content: system }, ...history],
     }),
   });
-  if (!res.ok) throw new Error(`OpenAI error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(friendlyError("ChatGPT", res.status, await res.text()));
   const data = await res.json();
   return data.choices?.[0]?.message?.content?.trim() ?? "";
+}
+
+/// Turn a raw provider error into a short, user-facing message (the detail is
+/// logged server-side, never shown in the chat).
+function friendlyError(provider: string, status: number, detail: string): string {
+  console.error(`${provider} error`, status, detail);
+  const other = provider === "Gemini" ? "ChatGPT" : "Gemini";
+  const d = detail.toLowerCase();
+  if (status === 429 || d.includes("resource_exhausted") || d.includes("quota") || d.includes("rate limit")) {
+    return `${provider} has hit its usage limit right now. Please try again in a minute, or switch to ${other}.`;
+  }
+  if (status === 401 || status === 403) {
+    return `${provider} isn't available right now. Please switch to ${other}.`;
+  }
+  return `${provider} couldn't answer right now. Please try again, or switch to ${other}.`;
 }
 
 async function askGemini(system: string, history: ChatMessage[]): Promise<string> {
@@ -72,7 +87,7 @@ async function askGemini(system: string, history: ChatMessage[]): Promise<string
       generationConfig: { temperature: 0.3, maxOutputTokens: MAX_TOKENS },
     }),
   });
-  if (!res.ok) throw new Error(`Gemini error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(friendlyError("Gemini", res.status, await res.text()));
   const data = await res.json();
   return (data.candidates?.[0]?.content?.parts ?? [])
     .map((p: { text?: string }) => p.text ?? "").join("").trim();
