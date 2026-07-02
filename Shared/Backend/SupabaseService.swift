@@ -345,7 +345,9 @@ final class SupabaseService: ObservableObject {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let caseObj = obj["case"], !(caseObj is NSNull),
               let pdata = try? JSONSerialization.data(withJSONObject: caseObj),
-              let full = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("graded")
+              // requireKey:false so a case whose answer key wasn't saved still
+              // renders the outcome (with the server's score) instead of going blank.
+              let full = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("graded", requireKey: false)
         else { return nil }
         var graded = full
         graded.remote = ref

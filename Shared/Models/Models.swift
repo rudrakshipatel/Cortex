@@ -909,9 +909,11 @@ final class CaseSession: ObservableObject {
         var testNames: [String]; var dxName: String?; var txNames: [String]
     }
     private func gatherPicks() -> Picks {
-        Picks(testIdx: tray.compactMap { p in clinicalCase.tests.firstIndex { $0.id == p.id } },
+        // Indices stay parallel to the name arrays (use -1 when not found), so the
+        // review re-map can zip them safely; the server ignores negative indices.
+        Picks(testIdx: tray.map { p in clinicalCase.tests.firstIndex { $0.id == p.id } ?? -1 },
               dxIdx: pickedDiagnosis.flatMap { p in clinicalCase.diagnoses.firstIndex { $0.id == p.id } },
-              txIdx: treatmentTray.compactMap { p in clinicalCase.treatments.firstIndex { $0.id == p.id } },
+              txIdx: treatmentTray.map { p in clinicalCase.treatments.firstIndex { $0.id == p.id } ?? -1 },
               testNames: tray.map(\.name),
               dxName: pickedDiagnosis?.name,
               txNames: treatmentTray.map(\.name))
@@ -945,11 +947,17 @@ final class CaseSession: ObservableObject {
         var graded = full
         graded.id = clinicalCase.id          // keep the progress-tracking id stable
         graded.remote = clinicalCase.remote
-        // Re-map picks onto the graded (answer-bearing) options BY NAME, so the
-        // review ✓/✗ stays correct even if option order changed since load.
-        tray = picks.testNames.compactMap { n in graded.tests.first { $0.name == n } }
-        pickedDiagnosis = picks.dxName.flatMap { n in graded.diagnoses.first { $0.name == n } }
-        treatmentTray = picks.txNames.compactMap { n in graded.treatments.first { $0.name == n } }
+        // Re-map picks onto the graded (answer-bearing) options BY NAME (falling
+        // back to index), so the review ✓/✗ stays correct even if option order
+        // changed since load, and never comes back blank.
+        tray = zip(picks.testNames, picks.testIdx).compactMap { name, idx in
+            graded.tests.first { $0.name == name } ?? (graded.tests.indices.contains(idx) ? graded.tests[idx] : nil)
+        }
+        pickedDiagnosis = (picks.dxName.flatMap { n in graded.diagnoses.first { $0.name == n } })
+            ?? picks.dxIdx.flatMap { graded.diagnoses.indices.contains($0) ? graded.diagnoses[$0] : nil }
+        treatmentTray = zip(picks.txNames, picks.txIdx).compactMap { name, idx in
+            graded.treatments.first { $0.name == name } ?? (graded.treatments.indices.contains(idx) ? graded.treatments[idx] : nil)
+        }
         clinicalCase = graded
         serverXP = xp
         serverCoins = coins
