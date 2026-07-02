@@ -152,7 +152,7 @@ struct CaseFlow: View {
             parts.append(session.solved ? c.outcomeTitle : "Every expert starts here.")
             parts.append(c.outcomeBody)
         }
-        if app.isPro || session.mentorUnlocked {
+        if app.isPro {
             let hints = c.infoCards.map(\.mentor) + c.tests.map(\.mentor)
             parts.append(contentsOf: hints.filter { !$0.isEmpty }.map { "Mentor insight: \($0)" })
         }
@@ -626,7 +626,7 @@ private struct OutcomeStep: View {
     @ObservedObject var session: CaseSession
     @EnvironmentObject var app: AppState
     var onDone: () -> Void
-    @State private var confirmMentor = false
+    @State private var showPro = false
     @State private var signingIn = false
     @State private var showAI = false
 
@@ -762,14 +762,15 @@ private struct OutcomeStep: View {
                 // Case review — how the player's tests / diagnosis / treatment went
                 CaseReviewCard(session: session)
 
-                // Learning breakdown — free with Pro, otherwise coin-unlocked.
+                // Mentor Insight breakdown — a Pro-only feature. Pro players get
+                // the full teaching; free players see it locked (no coin unlock).
                 if !learningSections.isEmpty {
-                    if app.isPro || session.mentorUnlocked {
+                    if app.isPro {
                         ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
                             CollapsibleInsight(icon: sec.icon, color: sec.color, title: sec.title, text: sec.body)
                         }
                     } else {
-                        lockedBreakdown
+                        proLockedBreakdown
                     }
                 }
 
@@ -802,6 +803,7 @@ private struct OutcomeStep: View {
             if correct { ConfettiBurst().padding(.top, 50) }
         }
         .sheet(isPresented: $showAI) { CaseDoubtChat(clinicalCase: session.clinicalCase) }
+        .sheet(isPresented: $showPro) { GoProSheet() }
     }
 
     @ViewBuilder private var badge: some View {
@@ -833,44 +835,36 @@ private struct OutcomeStep: View {
     /// every insight tile (Core Clinical Insights, Why Other Diagnoses Didn't
     /// Fit, Test Selection Rationale, Treatment Priorities & Sequencing, Clinical
     /// Traps, Learning Points, …) so free users can see what unlocking reveals.
-    private var lockedBreakdown: some View {
-        let canAfford = app.coins >= AppState.mentorCost
-        return CXCard(borderColor: CX.orange.opacity(0.5)) {
+    private var proLockedBreakdown: some View {
+        CXCard(borderColor: CX.teal.opacity(0.5)) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Image(systemName: "graduationcap.fill").foregroundStyle(CX.orange)
+                    Image(systemName: "graduationcap.fill").foregroundStyle(CX.teal)
                     Text("Full Case Breakdown").font(CX.heading(18)).foregroundStyle(CX.navy)
                     Spacer()
                     Image(systemName: "lock.fill").foregroundStyle(CX.navySoft)
                 }
+                Text("A Pro feature").font(CX.title(20)).foregroundStyle(CX.orange)
+                Text("Unlock the expert breakdown for every case — the reasoning, pitfalls and pearls behind the answer.")
+                    .font(CX.body(14)).foregroundStyle(CX.navySoft).fixedSize(horizontal: false, vertical: true)
                 ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
                     HStack(spacing: 8) {
                         Image(systemName: sec.icon).foregroundStyle(sec.color.opacity(0.6))
                         Text(sec.title).font(CX.body(15)).foregroundStyle(CX.navySoft)
                         Spacer()
+                        Image(systemName: "lock.fill").font(.system(size: 12)).foregroundStyle(CX.navySoft)
                     }
                 }
-                Button { confirmMentor = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: canAfford ? "dollarsign.circle.fill" : "xmark.circle.fill")
-                        Text(canAfford ? "Unlock · \(AppState.mentorCost) coins" : "Need \(AppState.mentorCost) coins")
+                Button { showPro = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "crown.fill"); Text("Upgrade to Pro")
                     }
-                    .font(CX.label(14)).foregroundStyle(.white)
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                    .background(canAfford ? AnyShapeStyle(CX.orangeButton) : AnyShapeStyle(CX.navySoft), in: Capsule())
+                    .font(CX.heading(16)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(CX.orangeButton, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .buttonStyle(PressStyle()).disabled(!canAfford)
+                .buttonStyle(PressStyle())
             }.frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .confirmationDialog("Unlock the full breakdown?", isPresented: $confirmMentor, titleVisibility: .visible) {
-            Button("Unlock for \(AppState.mentorCost) coins") {
-                if app.spendCoins(AppState.mentorCost) {
-                    withAnimation(.spring(duration: 0.35)) { session.mentorUnlocked = true }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This spends \(AppState.mentorCost) coins (you have \(app.coins)) to reveal the expert teaching for this case.")
         }
     }
 }
