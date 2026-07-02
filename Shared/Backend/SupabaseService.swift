@@ -605,6 +605,40 @@ final class SupabaseService: ObservableObject {
                            extraHeaders: ["Prefer": "return=minimal"])
     }
 
+    // MARK: - AI case tutor (Pro "Ask AI about this case")
+
+    /// One chat turn sent to / from the AI tutor. `role` is "user" or "assistant".
+    struct AIMessage: Codable { let role: String; let content: String }
+    private struct AIRequest: Encodable {
+        let provider: String       // "openai" (ChatGPT) or "gemini"
+        let caseContext: String
+        let messages: [AIMessage]
+    }
+
+    /// Ask the case tutor a follow-up question through the `ask-ai` Edge Function
+    /// (which holds the OpenAI / Gemini keys server-side). Returns the reply text.
+    func askAI(provider: String, caseContext: String, messages: [AIMessage]) async throws -> String {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isSignedIn else { throw SBError.notSignedIn }
+        let body = try JSONEncoder().encode(AIRequest(provider: provider, caseContext: caseContext, messages: messages))
+        do {
+            let (data, _) = try await send(method: "POST", path: "functions/v1/ask-ai", body: body, player: true)
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let reply = obj["reply"] as? String, !reply.isEmpty {
+                return reply
+            }
+            throw SBError.http(0, "The AI returned an empty response. Try again.")
+        } catch let SBError.http(_, msg) {
+            // The function replies with { "error": "..." } on failure — surface it.
+            if let d = msg.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw SBError.http(0, err)
+            }
+            throw SBError.http(0, "Couldn't reach the AI tutor. Check your connection and try again.")
+        }
+    }
+
     // MARK: - HTTP core
     @discardableResult
     private func send(method: String, path: String, body: Data? = nil,

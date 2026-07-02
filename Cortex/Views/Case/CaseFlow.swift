@@ -628,6 +628,7 @@ private struct OutcomeStep: View {
     var onDone: () -> Void
     @State private var confirmMentor = false
     @State private var signingIn = false
+    @State private var showAI = false
 
     /// Overall verdict for the SOLVED badge + celebratory narrative: the attempt
     /// solved the case (scored ≥ 25 XP). Diagnosis-specific displays elsewhere
@@ -772,6 +773,20 @@ private struct OutcomeStep: View {
                     }
                 }
 
+                // Ask AI about this case — a Pro perk for clearing doubts.
+                if app.isPro {
+                    Button { showAI = true } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                            Text("Ask AI about this case")
+                        }
+                        .font(CX.heading(17)).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(CX.tealButton, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(PressStyle())
+                }
+
                 // Share + continue
                 ShareLink(item: challengeText) {
                     Text("Challenge Friends").font(CX.heading(16)).foregroundStyle(CX.orange)
@@ -786,6 +801,7 @@ private struct OutcomeStep: View {
         .overlay(alignment: .top) {
             if correct { ConfettiBurst().padding(.top, 50) }
         }
+        .sheet(isPresented: $showAI) { CaseDoubtChat(clinicalCase: session.clinicalCase) }
     }
 
     @ViewBuilder private var badge: some View {
