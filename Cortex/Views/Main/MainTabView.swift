@@ -122,6 +122,9 @@ struct GoProSheet: View {
     @State private var selectedID: String?
     @State private var working = false
     @State private var message: String?
+    @State private var legal: LegalDoc?
+
+    private enum LegalDoc: String, Identifiable { case terms, privacy; var id: String { rawValue } }
 
     var body: some View {
         AppBackground {
@@ -150,8 +153,14 @@ struct GoProSheet: View {
                         redeemCouponButton
                         Button("Restore Purchases") { Task { await restore() } }
                             .font(CX.label(14)).foregroundStyle(CX.teal).disabled(working)
-                        Text("Auto-renewable subscription. Cancel anytime in Settings. Payment is charged to your Apple ID.")
+                        Text("Auto-renewable subscription. Payment is charged to your Apple ID at confirmation. It renews automatically unless cancelled at least 24 hours before the period ends; manage or cancel anytime in Settings.")
                             .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                        HStack(spacing: 8) {
+                            Button("Terms of Use") { legal = .terms }
+                            Text("·").foregroundStyle(CX.navySoft)
+                            Button("Privacy Policy") { legal = .privacy }
+                        }
+                        .font(CX.label(12).weight(.semibold)).foregroundStyle(CX.teal)
                     }
 
                     if let message {
@@ -166,6 +175,12 @@ struct GoProSheet: View {
         .onAppear { selectedID = selectedID ?? store.plans.last?.id }
         .onChange(of: store.plans.count) { _, _ in
             if selectedID == nil { selectedID = store.plans.last?.id }
+        }
+        .sheet(item: $legal) { doc in
+            switch doc {
+            case .terms:   TermsOfUseView()
+            case .privacy: PrivacyPolicyView()
+            }
         }
     }
 
