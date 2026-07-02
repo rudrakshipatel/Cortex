@@ -142,7 +142,16 @@ final class AppState: ObservableObject {
         solvedCaseIDs = Set(d.stringArray(forKey: K.solvedCases) ?? [])
         specialtySolved = d.dictionary(forKey: K.specialtySolved) as? [String: Int] ?? [:]
         caseTrophies = d.dictionary(forKey: K.caseTrophies) as? [String: Int] ?? [:]
-        displayName = d.string(forKey: K.name) ?? "Dr. Vix"
+        if let storedName = d.string(forKey: K.name), storedName != "Dr. Vix" {
+            displayName = storedName
+        } else {
+            // First launch (or the legacy "Dr. Vix" default): assign a random
+            // alphanumeric guest name (persisted), which stays until the user
+            // edits it.
+            let guest = AppState.randomGuestName()
+            d.set(guest, forKey: K.name)
+            displayName = guest
+        }
         casesSolved = d.object(forKey: K.casesSolved) as? Int ?? 0
         casesFinished = d.object(forKey: K.casesFinished) as? Int ?? 0
         weeklyXP = d.object(forKey: K.weeklyXP) as? Int ?? 0
@@ -225,6 +234,14 @@ final class AppState: ObservableObject {
     /// alone — the device has already been through onboarding.
     func resetProgress() {
         applyProfile(ProfileState())
+        displayName = Self.randomGuestName()   // a fresh account starts as a new guest
+    }
+
+    /// A random alphanumeric guest name, e.g. "Guest7K2QX". Assigned to every new
+    /// user until they set their own display name.
+    static func randomGuestName() -> String {
+        let chars = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")   // no ambiguous 0/O/1/I
+        return "Guest" + String((0..<5).map { _ in chars.randomElement()! })
     }
 
     /// Bind the signed-in account: load its cloud profile, or create a fresh one.
