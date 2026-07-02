@@ -15,8 +15,18 @@ struct ManageContentView: View {
     @State private var loading = false
     @State private var error: String?
 
+    /// Every clinical case ever published — the full history, so any can be edited.
     private var clinical: [SupabaseService.AdminCaseRow] { cases.filter { $0.kind == "clinical" } }
-    private var daily: [SupabaseService.AdminCaseRow]    { cases.filter { $0.kind == "daily" } }
+    /// Only today's daily case (GMT) — the one currently live for players.
+    private var todaysDaily: [SupabaseService.AdminCaseRow] {
+        let today = AppState.gmtDay()
+        return cases.filter { $0.kind == "daily" && ($0.date.map { AppState.gmtDay($0) == today } ?? false) }
+    }
+    /// Only emergencies inside their 3-hour live window right now.
+    private var liveEmergencies: [SupabaseService.AdminEmergencyRow] {
+        let now = Date()
+        return emergencies.filter { now >= $0.fireDate && now < $0.fireDate.addingTimeInterval(EmergencyCase.activeWindow) }
+    }
 
     var body: some View {
         List {
@@ -37,27 +47,27 @@ struct ManageContentView: View {
                 .onDelete { remove(clinical, at: $0, delete: sb.deletePublishedCase) }
             }
 
-            Section("Daily · \(daily.count)") {
-                if daily.isEmpty { emptyRow("No daily cases published") }
-                ForEach(daily) { row in
+            Section("Today's Daily Case") {
+                if todaysDaily.isEmpty { emptyRow("No daily case scheduled for today (GMT)") }
+                ForEach(todaysDaily) { row in
                     NavigationLink {
                         EditPublishedCase(row: row, reload: reload)
                     } label: { caseLabel(row.clinicalCase, subtitle: dailySubtitle(row)) }
                 }
-                .onDelete { remove(daily, at: $0, delete: sb.deletePublishedCase) }
+                .onDelete { remove(todaysDaily, at: $0, delete: sb.deletePublishedCase) }
             }
 
-            Section("Emergency · \(emergencies.count)") {
-                if emergencies.isEmpty { emptyRow("No emergencies published") }
-                ForEach(emergencies) { row in
+            Section("Live Emergency") {
+                if liveEmergencies.isEmpty { emptyRow("No live emergency right now") }
+                ForEach(liveEmergencies) { row in
                     NavigationLink {
                         EditPublishedEmergency(row: row, reload: reload)
                     } label: { caseLabel(row.clinicalCase,
-                                         subtitle: "Fires \(row.fireDate.formatted(date: .abbreviated, time: .shortened))") }
+                                         subtitle: "Live until \(row.fireDate.addingTimeInterval(EmergencyCase.activeWindow).formatted(date: .abbreviated, time: .shortened))") }
                 }
                 .onDelete { idx in
-                    let targets = idx.map { emergencies[$0] }
-                    emergencies.remove(atOffsets: idx)
+                    let targets = idx.map { liveEmergencies[$0] }
+                    emergencies.removeAll { row in targets.contains { $0.id == row.id } }
                     Task { for t in targets { try? await sb.deletePublishedEmergency(id: t.id) }; await load() }
                 }
             }
