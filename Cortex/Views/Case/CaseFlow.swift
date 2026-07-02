@@ -152,7 +152,7 @@ struct CaseFlow: View {
             parts.append(session.solved ? c.outcomeTitle : "Every expert starts here.")
             parts.append(c.outcomeBody)
         }
-        if session.mentorUnlocked {
+        if app.isPro || session.mentorUnlocked {
             let hints = c.infoCards.map(\.mentor) + c.tests.map(\.mentor)
             parts.append(contentsOf: hints.filter { !$0.isEmpty }.map { "Mentor insight: \($0)" })
         }
@@ -761,9 +761,9 @@ private struct OutcomeStep: View {
                 // Case review — how the player's tests / diagnosis / treatment went
                 CaseReviewCard(session: session)
 
-                // Learning breakdown (coin-locked, collapsible)
+                // Learning breakdown — free with Pro, otherwise coin-unlocked.
                 if !learningSections.isEmpty {
-                    if session.mentorUnlocked {
+                    if app.isPro || session.mentorUnlocked {
                         ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
                             CollapsibleInsight(icon: sec.icon, color: sec.color, title: sec.title, text: sec.body)
                         }
