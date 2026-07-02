@@ -159,11 +159,21 @@ struct CaseEditor<Header: View>: View {
                          add: { draft.diagnoses.append(.init()) },
                          remove: { if draft.diagnoses.count > 2 { draft.diagnoses.removeLast() } })
 
-            ForEach($draft.treatments) { $t in
-                Section("Treatment") {
-                    TextField("Category (e.g. Medications)", text: $t.category)
-                    TextField("Treatment name", text: $t.name)
-                    Toggle("Appropriate", isOn: $t.appropriate)
+            Section("Treatment · tap the circle to mark the appropriate ones") {
+                ForEach(draft.treatments.indices, id: \.self) { i in
+                    HStack(alignment: .top, spacing: 10) {
+                        Button { draft.treatments[i].appropriate.toggle() } label: {
+                            Image(systemName: draft.treatments[i].appropriate ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(draft.treatments[i].appropriate ? CX.teal : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("Category (e.g. Medications)", text: $draft.treatments[i].category)
+                                .font(.footnote).foregroundStyle(.secondary)
+                            TextField("Treatment name", text: $draft.treatments[i].name)
+                        }
+                    }
+                    .padding(.vertical, 2)
                 }
             }
             addRemoveRow("treatment", count: draft.treatments.count,
