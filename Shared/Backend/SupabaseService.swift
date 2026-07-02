@@ -320,13 +320,16 @@ final class SupabaseService: ObservableObject {
 
     /// Submit an attempt (pick indices) to `grade_case`; the server scores it
     /// against the stored answers and returns the score + the full case.
-    func gradeCase(_ ref: RemoteRef, testIdx: [Int], dxIdx: Int?, txIdx: [Int]) async -> GradeResult? {
+    func gradeCase(_ ref: RemoteRef, testIdx: [Int], dxIdx: Int?, txIdx: [Int],
+                   testNames: [String] = [], dxName: String? = nil, txNames: [String] = []) async -> GradeResult? {
         guard isConfigured else { return nil }
         var args: [String: Any] = [
             "p_source": ref.source, "p_id": ref.id,
             "p_test_idx": testIdx, "p_tx_idx": txIdx,
+            "p_test_names": testNames, "p_tx_names": txNames,
         ]
         if let dxIdx { args["p_dx_idx"] = dxIdx }
+        if let dxName { args["p_dx_name"] = dxName }
         guard let body = try? JSONSerialization.data(withJSONObject: args),
               let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/grade_case",
                                               body: body, player: true),

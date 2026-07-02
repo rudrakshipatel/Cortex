@@ -315,12 +315,16 @@ create index if not exists case_attempts_user_time_idx
 --     Grading REQUIRES an authenticated player (so anonymous scripts can't
 --     scrape answers one case at a time) and is rate-limited per user, which
 --     closes the "grade every case once to harvest the bank" hole.
+drop function if exists public.grade_case(text, uuid, int[], int, int[]);
 create or replace function public.grade_case(
-  p_source   text,
-  p_id       uuid,
-  p_test_idx int[] default '{}',
-  p_dx_idx   int   default null,
-  p_tx_idx   int[] default '{}'
+  p_source     text,
+  p_id         uuid,
+  p_test_idx   int[]  default '{}',
+  p_dx_idx     int    default null,
+  p_tx_idx     int[]  default '{}',
+  p_dx_name    text   default null,
+  p_test_names text[] default null,
+  p_tx_names   text[] default null
 ) returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare
@@ -367,20 +371,34 @@ begin
   treatments := coalesce(pay->'treatments',  '[]'::jsonb);
   xp_reward  := coalesce((pay->>'xpReward')::int, 20);
 
-  -- Diagnosis — 60%.
-  if p_dx_idx is not null and p_dx_idx >= 0 and p_dx_idx < jsonb_array_length(diagnoses) then
+  -- Diagnosis — 60%. Prefer name match (robust to reordering); else index.
+  if p_dx_name is not null then
+    dx_ok := exists (
+      select 1 from jsonb_array_elements(diagnoses) d
+      where lower(btrim(d->>'name')) = lower(btrim(p_dx_name))
+        and coalesce((d->>'correct')::boolean, false));
+  elsif p_dx_idx is not null and p_dx_idx >= 0 and p_dx_idx < jsonb_array_length(diagnoses) then
     dx_ok := coalesce((diagnoses->p_dx_idx->>'correct')::boolean, false);
   end if;
 
   -- Tests — up to 20%.
   h_total := (select count(*) from jsonb_array_elements(tests) t
               where coalesce((t->>'helpful')::boolean, false));
-  h_good  := (select count(*) from unnest(p_test_idx) i
-              where i >= 0 and i < jsonb_array_length(tests)
-                and coalesce((tests->i->>'helpful')::boolean, false));
-  h_bad   := (select count(*) from unnest(p_test_idx) i
-              where i >= 0 and i < jsonb_array_length(tests)
-                and not coalesce((tests->i->>'helpful')::boolean, false));
+  if p_test_names is not null then
+    h_good := (select count(*) from jsonb_array_elements(tests) t
+               where lower(btrim(t->>'name')) = any (select lower(btrim(x)) from unnest(p_test_names) x)
+                 and coalesce((t->>'helpful')::boolean, false));
+    h_bad  := (select count(*) from jsonb_array_elements(tests) t
+               where lower(btrim(t->>'name')) = any (select lower(btrim(x)) from unnest(p_test_names) x)
+                 and not coalesce((t->>'helpful')::boolean, false));
+  else
+    h_good := (select count(*) from unnest(p_test_idx) i
+               where i >= 0 and i < jsonb_array_length(tests)
+                 and coalesce((tests->i->>'helpful')::boolean, false));
+    h_bad  := (select count(*) from unnest(p_test_idx) i
+               where i >= 0 and i < jsonb_array_length(tests)
+                 and not coalesce((tests->i->>'helpful')::boolean, false));
+  end if;
   if h_total > 0 then
     tests_score := greatest(0, h_good::numeric / h_total - 0.25 * h_bad) * 0.20;
   end if;
@@ -388,12 +406,21 @@ begin
   -- Treatments — up to 20%.
   a_total := (select count(*) from jsonb_array_elements(treatments) t
               where coalesce((t->>'appropriate')::boolean, false));
-  a_good  := (select count(*) from unnest(p_tx_idx) i
-              where i >= 0 and i < jsonb_array_length(treatments)
-                and coalesce((treatments->i->>'appropriate')::boolean, false));
-  a_bad   := (select count(*) from unnest(p_tx_idx) i
-              where i >= 0 and i < jsonb_array_length(treatments)
-                and not coalesce((treatments->i->>'appropriate')::boolean, false));
+  if p_tx_names is not null then
+    a_good := (select count(*) from jsonb_array_elements(treatments) t
+               where lower(btrim(t->>'name')) = any (select lower(btrim(x)) from unnest(p_tx_names) x)
+                 and coalesce((t->>'appropriate')::boolean, false));
+    a_bad  := (select count(*) from jsonb_array_elements(treatments) t
+               where lower(btrim(t->>'name')) = any (select lower(btrim(x)) from unnest(p_tx_names) x)
+                 and not coalesce((t->>'appropriate')::boolean, false));
+  else
+    a_good := (select count(*) from unnest(p_tx_idx) i
+               where i >= 0 and i < jsonb_array_length(treatments)
+                 and coalesce((treatments->i->>'appropriate')::boolean, false));
+    a_bad  := (select count(*) from unnest(p_tx_idx) i
+               where i >= 0 and i < jsonb_array_length(treatments)
+                 and not coalesce((treatments->i->>'appropriate')::boolean, false));
+  end if;
   if a_total > 0 then
     tx_score := greatest(0, a_good::numeric / a_total - 0.25 * a_bad) * 0.20;
   end if;
@@ -415,8 +442,8 @@ begin
 end;
 $$;
 -- Only signed-in players may grade (anon callers get "auth required").
-revoke execute on function public.grade_case(text, uuid, int[], int, int[]) from anon;
-grant  execute on function public.grade_case(text, uuid, int[], int, int[]) to authenticated;
+revoke execute on function public.grade_case(text, uuid, int[], int, int[], text, text[], text[]) from anon;
+grant  execute on function public.grade_case(text, uuid, int[], int, int[], text, text[], text[]) to authenticated;
 
 -- 4) Lock the tables: anon may no longer read raw rows (so the answer key can't
 --    be scraped). Access is only through the stripped feeds + grade_case above.

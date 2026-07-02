@@ -895,11 +895,20 @@ final class CaseSession: ObservableObject {
     /// The picked options as array indices into the played (stripped) case —
     /// these line up with the server's stored arrays because stripping keeps
     /// option order intact.
-    private func pickedIndices() -> (tests: [Int], dx: Int?, tx: [Int]) {
-        let t = tray.compactMap { p in clinicalCase.tests.firstIndex { $0.id == p.id } }
-        let d = pickedDiagnosis.flatMap { p in clinicalCase.diagnoses.firstIndex { $0.id == p.id } }
-        let x = treatmentTray.compactMap { p in clinicalCase.treatments.firstIndex { $0.id == p.id } }
-        return (t, d, x)
+    /// The player's picks captured both as array indices (legacy) and as option
+    /// NAMES. Grading matches by name, so a case that was edited or reordered
+    /// after it loaded still scores correctly.
+    struct Picks {
+        var testIdx: [Int]; var dxIdx: Int?; var txIdx: [Int]
+        var testNames: [String]; var dxName: String?; var txNames: [String]
+    }
+    private func gatherPicks() -> Picks {
+        Picks(testIdx: tray.compactMap { p in clinicalCase.tests.firstIndex { $0.id == p.id } },
+              dxIdx: pickedDiagnosis.flatMap { p in clinicalCase.diagnoses.firstIndex { $0.id == p.id } },
+              txIdx: treatmentTray.compactMap { p in clinicalCase.treatments.firstIndex { $0.id == p.id } },
+              testNames: tray.map(\.name),
+              dxName: pickedDiagnosis?.name,
+              txNames: treatmentTray.map(\.name))
     }
 
     /// Grade a server case: submit the picks, get back the score and the full
@@ -911,9 +920,10 @@ final class CaseSession: ObservableObject {
         guard let ref = clinicalCase.remote else { revealed = true; return }
         guard SupabaseService.shared.isSignedIn else { needsSignIn = true; return }
         needsSignIn = false
-        let picks = pickedIndices()
+        let picks = gatherPicks()
         if let result = await SupabaseService.shared.gradeCase(
-            ref, testIdx: picks.tests, dxIdx: picks.dx, txIdx: picks.tx) {
+            ref, testIdx: picks.testIdx, dxIdx: picks.dxIdx, txIdx: picks.txIdx,
+            testNames: picks.testNames, dxName: picks.dxName, txNames: picks.txNames) {
             apply(full: result.fullCase, xp: result.earnedXP, coins: result.earnedCoins, picks: picks)
         }
         revealed = true
@@ -925,14 +935,15 @@ final class CaseSession: ObservableObject {
 
     /// Swap the stripped case for the graded one and re-map the player's picks
     /// onto the now-complete option objects (so the review screens show ✓/✗).
-    private func apply(full: ClinicalCase, xp: Int, coins: Int,
-                       picks: (tests: [Int], dx: Int?, tx: [Int])) {
+    private func apply(full: ClinicalCase, xp: Int, coins: Int, picks: Picks) {
         var graded = full
         graded.id = clinicalCase.id          // keep the progress-tracking id stable
         graded.remote = clinicalCase.remote
-        tray = picks.tests.compactMap { graded.tests.indices.contains($0) ? graded.tests[$0] : nil }
-        pickedDiagnosis = picks.dx.flatMap { graded.diagnoses.indices.contains($0) ? graded.diagnoses[$0] : nil }
-        treatmentTray = picks.tx.compactMap { graded.treatments.indices.contains($0) ? graded.treatments[$0] : nil }
+        // Re-map picks onto the graded (answer-bearing) options BY NAME, so the
+        // review ✓/✗ stays correct even if option order changed since load.
+        tray = picks.testNames.compactMap { n in graded.tests.first { $0.name == n } }
+        pickedDiagnosis = picks.dxName.flatMap { n in graded.diagnoses.first { $0.name == n } }
+        treatmentTray = picks.txNames.compactMap { n in graded.treatments.first { $0.name == n } }
         clinicalCase = graded
         serverXP = xp
         serverCoins = coins
