@@ -230,7 +230,7 @@ struct EmailSignInSheet: View {
                         .keyboardType(.emailAddress).textContentType(.emailAddress)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .focused($focused)
-                        .font(CX.body(17)).padding(16)
+                        .font(CX.body(17)).foregroundStyle(CX.navy).tint(CX.navy).padding(16)
                         .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
                     primaryButton("Send Code", enabled: emailValid) { Task { await send() } }
@@ -242,6 +242,7 @@ struct EmailSignInSheet: View {
                         .keyboardType(.numberPad).textContentType(.oneTimeCode)
                         .focused($focused)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .foregroundStyle(CX.navy).tint(CX.navy)
                         .multilineTextAlignment(.center).kerning(8)
                         .padding(16)
                         .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
