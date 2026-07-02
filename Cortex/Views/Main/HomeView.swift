@@ -716,6 +716,9 @@ struct MeView: View {
     @State private var showTrophies = false
     @State private var showCoinsInfo = false
     @State private var confirmLogout = false
+    @State private var confirmDelete = false
+    @State private var deleting = false
+    @State private var deleteError: String?
     @State private var infoPage: InfoPageKind?
     @Environment(\.openURL) private var openURL
 
@@ -792,6 +795,34 @@ struct MeView: View {
             Text(SupabaseService.shared.userEmail.map { "Signed in as \($0).\nYour progress is saved to your account — you'll need to sign in again to play." }
                  ?? "Your progress is saved to your account — you'll need to sign in again to play.")
         }
+        .confirmationDialog("Delete your account?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete Account", role: .destructive) {
+                deleting = true
+                Task {
+                    do {
+                        try await SupabaseService.shared.deleteAccount()
+                        app.wipeAfterAccountDeletion()
+                    } catch {
+                        deleteError = (error as? LocalizedError)?.errorDescription ?? "Couldn't delete your account. Try again."
+                    }
+                    deleting = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account and all your progress, and can't be undone.")
+        }
+        .alert("Delete Account", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("OK") {}
+        } message: { Text(deleteError ?? "") }
+        .overlay {
+            if deleting {
+                ZStack {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                    ProgressView("Deleting…").padding(20).background(.white, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
     }
 
     private var editProfileButton: some View {
@@ -856,7 +887,11 @@ struct MeView: View {
             settingsRow("lock.shield.fill", "Privacy Policy") { infoPage = .privacy }
             settingsRow("questionmark.circle.fill", "FAQs") { infoPage = .faqs }
             settingsRow("envelope.fill", "Facing a Problem? Contact Us") { infoPage = .support }
-            settingsRow("rectangle.portrait.and.arrow.right.fill", "Logout", tint: CX.orange, last: true) { confirmLogout = true }
+            settingsRow("rectangle.portrait.and.arrow.right.fill", "Logout", tint: CX.orange,
+                        last: !SupabaseService.shared.isSignedIn) { confirmLogout = true }
+            if SupabaseService.shared.isSignedIn {
+                settingsRow("trash.fill", "Delete Account", tint: .red, last: true) { confirmDelete = true }
+            }
         }
         .background(CX.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }

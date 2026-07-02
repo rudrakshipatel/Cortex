@@ -259,6 +259,14 @@ final class AppState: ObservableObject {
         resetProgress()
     }
 
+    /// Forget a just-deleted account and wipe local progress WITHOUT saving to
+    /// the cloud (the account no longer exists). Used after account deletion.
+    func wipeAfterAccountDeletion() {
+        accountBound = false
+        resetProgress()
+        defaults.set(false, forKey: "cx.hasBoundAccount")
+    }
+
     private func autosaveProfile() {
         guard accountBound, SupabaseService.shared.isSignedIn else { return }
         Task { await pushProfileNow() }

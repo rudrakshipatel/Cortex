@@ -639,6 +639,26 @@ final class SupabaseService: ObservableObject {
         }
     }
 
+    // MARK: - Account deletion (App Store 5.1.1)
+
+    /// Permanently delete the signed-in user's account + data through the
+    /// `delete-account` Edge Function, then clear the local session.
+    func deleteAccount() async throws {
+        guard isConfigured, isSignedIn else { throw SBError.notSignedIn }
+        do {
+            _ = try await send(method: "POST", path: "functions/v1/delete-account",
+                               body: Data("{}".utf8), player: true)
+        } catch let SBError.http(_, msg) {
+            if let d = msg.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw SBError.http(0, err)
+            }
+            throw SBError.http(0, "Couldn't delete your account. Check your connection and try again.")
+        }
+        signOutPlayer()
+    }
+
     // MARK: - HTTP core
     @discardableResult
     private func send(method: String, path: String, body: Data? = nil,
