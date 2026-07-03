@@ -175,7 +175,7 @@ struct CaseFlow: View {
     /// Persist the (now-known) result so progress survives even if the player
     /// closes the case with ✕ instead of tapping "Continue". Runs once.
     private func award() {
-        guard !awarded else { return }
+        guard !awarded, session.gradeError == nil else { return }   // don't award on a grading failure
         awarded = true
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
@@ -661,7 +661,9 @@ private struct OutcomeStep: View {
     var body: some View {
         // Server cases are scored remotely; wait for the result before revealing
         // anything (otherwise the answer/score would flash as a wrong "0").
-        if session.revealed || session.hasLocalKey {
+        if let gradeError = session.gradeError {
+            gradeErrorView(gradeError)
+        } else if session.revealed || session.hasLocalKey {
             content
         } else if session.needsSignIn {
             signInPrompt
@@ -673,6 +675,25 @@ private struct OutcomeStep: View {
                 Spacer()
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// Shown when grading failed for a reason other than sign-in (rate limit,
+    /// case not found, network) — explains it and offers a retry.
+    private func gradeErrorView(_ message: String) -> some View {
+        VStack(spacing: 18) {
+            Spacer()
+            VixClip(anim: .writing, size: 130, fallback: .idea)
+            Text("Couldn't score this case")
+                .font(CX.title(22)).foregroundStyle(CX.navy).multilineTextAlignment(.center)
+            Text(message)
+                .font(CX.body(15)).foregroundStyle(CX.navySoft)
+                .multilineTextAlignment(.center).padding(.horizontal, 28)
+            CXButton(title: "Try Again") { Task { await session.gradeRemotely() } }
+                .padding(.horizontal, 40).padding(.top, 4)
+            Button("Close") { onDone() }
+                .font(CX.label(15)).foregroundStyle(CX.navySoft)
+            Spacer()
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Shown when a server case is finished but no player is signed in — grading

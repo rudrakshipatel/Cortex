@@ -321,8 +321,9 @@ final class SupabaseService: ObservableObject {
     /// Submit an attempt (pick indices) to `grade_case`; the server scores it
     /// against the stored answers and returns the score + the full case.
     func gradeCase(_ ref: RemoteRef, testIdx: [Int], dxIdx: Int?, txIdx: [Int],
-                   testNames: [String] = [], dxName: String? = nil, txNames: [String] = []) async -> GradeResult? {
-        guard isConfigured else { return nil }
+                   testNames: [String] = [], dxName: String? = nil, txNames: [String] = [])
+        async -> (result: GradeResult?, error: String?) {
+        guard isConfigured else { return (nil, nil) }
         var args: [String: Any] = [
             "p_source": ref.source, "p_id": ref.id,
             "p_test_idx": testIdx, "p_tx_idx": txIdx,
@@ -333,28 +334,46 @@ final class SupabaseService: ObservableObject {
         // Prefer name-based grading. If the database hasn't been migrated to the
         // name-aware grade_case yet, that call 404s — fall back to index-only so
         // grading still works everywhere.
-        if let r = await callGrade(args, ref: ref) { return r }
+        let first = await callGrade(args, ref: ref)
+        if first.result != nil { return first }
         for k in ["p_test_names", "p_tx_names", "p_dx_name"] { args.removeValue(forKey: k) }
         return await callGrade(args, ref: ref)
     }
 
-    private func callGrade(_ args: [String: Any], ref: RemoteRef) async -> GradeResult? {
+    private func callGrade(_ args: [String: Any], ref: RemoteRef) async -> (result: GradeResult?, error: String?) {
         guard let body = try? JSONSerialization.data(withJSONObject: args),
               let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/grade_case",
-                                              body: body, player: true),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let caseObj = obj["case"], !(caseObj is NSNull),
+                                              body: body, player: true) else {
+            return (nil, "Couldn't reach the server. Check your connection and try again.")
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, "The server sent an unexpected response.")
+        }
+        // The RPC returns { "error": ... } for auth / rate-limit / not-found.
+        if let serverError = obj["error"] as? String {
+            switch serverError {
+            case "rate limited":
+                return (nil, "You've graded a lot of cases in a short time. Please wait a little and try again.")
+            case "not found":
+                return (nil, "This case is no longer available — reopen the app to refresh, then try again.")
+            case "auth required":
+                return (nil, "Please sign in to have your case scored.")
+            default:
+                return (nil, "Couldn't score this case. Please try again.")
+            }
+        }
+        guard let caseObj = obj["case"], !(caseObj is NSNull),
               let pdata = try? JSONSerialization.data(withJSONObject: caseObj),
               // requireKey:false so a case whose answer key wasn't saved still
               // renders the outcome (with the server's score) instead of going blank.
               let full = try? JSONDecoder().decode(CaseDTO.self, from: pdata).toModel("graded", requireKey: false)
-        else { return nil }
+        else { return (nil, "Couldn't read the graded case.") }
         var graded = full
         graded.remote = ref
         let score = (obj["score"] as? NSNumber)?.doubleValue ?? 0
         let xp = (obj["earned_xp"] as? NSNumber)?.intValue ?? 0
         let coins = (obj["earned_coins"] as? NSNumber)?.intValue ?? 0
-        return GradeResult(score: score, earnedXP: xp, earnedCoins: coins, fullCase: graded)
+        return (GradeResult(score: score, earnedXP: xp, earnedCoins: coins, fullCase: graded), nil)
     }
 
     // MARK: - Global leaderboard

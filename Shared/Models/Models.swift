@@ -839,6 +839,9 @@ final class CaseSession: ObservableObject {
     /// Server grading requires a signed-in player; set when the outcome is
     /// reached without a session, so the outcome screen can prompt sign-in.
     @Published private(set) var needsSignIn = false
+    /// A human-readable reason grading failed (e.g. rate-limited, case not found),
+    /// so the outcome screen can explain instead of showing a blank 0-XP result.
+    @Published private(set) var gradeError: String?
 
     /// True when the case carries its own answer key (built-in/seed cases).
     /// Server cases arrive stripped of answers and are graded remotely instead.
@@ -928,11 +931,15 @@ final class CaseSession: ObservableObject {
         guard let ref = clinicalCase.remote else { revealed = true; return }
         guard SupabaseService.shared.isSignedIn else { needsSignIn = true; return }
         needsSignIn = false
+        gradeError = nil
         let picks = gatherPicks()
-        if let result = await SupabaseService.shared.gradeCase(
+        let (result, error) = await SupabaseService.shared.gradeCase(
             ref, testIdx: picks.testIdx, dxIdx: picks.dxIdx, txIdx: picks.txIdx,
-            testNames: picks.testNames, dxName: picks.dxName, txNames: picks.txNames) {
+            testNames: picks.testNames, dxName: picks.dxName, txNames: picks.txNames)
+        if let result {
             apply(full: result.fullCase, xp: result.earnedXP, coins: result.earnedCoins, picks: picks)
+        } else {
+            gradeError = error
         }
         revealed = true
     }
