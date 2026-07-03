@@ -471,6 +471,21 @@ final class SupabaseService: ObservableObject {
         return true
     }
 
+    /// Exchange the player's refresh token for a fresh access token (player access
+    /// tokens expire ~hourly). Returns false if there's no valid refresh token.
+    private func refreshPlayerSession() async -> Bool {
+        guard isConfigured, let rt = Keychain.get(K.userRefresh),
+              let body = try? JSONSerialization.data(withJSONObject: ["refresh_token": rt]),
+              let (data, _) = try? await send(method: "POST",
+                  path: "auth/v1/token?grant_type=refresh_token", body: body),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = obj["access_token"] as? String
+        else { return false }
+        userToken = token
+        if let newRT = obj["refresh_token"] as? String { Keychain.set(newRT, for: K.userRefresh) }
+        return true
+    }
+
     // MARK: - Admin publishing
     private struct OutRow<P: Encodable>: Encodable { let kind: String; let payload: P }
     private struct EmergRow: Encodable {
@@ -715,13 +730,14 @@ final class SupabaseService: ObservableObject {
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw SBError.badJSON }
 
-        // Admin token expired? Refresh once and retry; if that fails, force re-login.
-        if http.statusCode == 401, admin, !retrying {
-            if await refreshSession() {
+        // Access token expired? Refresh once and retry; if that fails, force re-login.
+        if http.statusCode == 401, !retrying, (admin || player) {
+            let refreshed = admin ? await refreshSession() : await refreshPlayerSession()
+            if refreshed {
                 return try await send(method: method, path: path, body: body,
-                                      admin: admin, extraHeaders: extraHeaders, retrying: true)
+                                      admin: admin, player: player, extraHeaders: extraHeaders, retrying: true)
             }
-            adminToken = nil; refreshToken = nil
+            if admin { adminToken = nil; refreshToken = nil } else { userToken = nil }
             throw SBError.notSignedIn
         }
         guard (200...299).contains(http.statusCode) else {
