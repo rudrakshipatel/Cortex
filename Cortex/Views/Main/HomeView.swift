@@ -885,8 +885,8 @@ struct MeView: View {
 
     private var settingsList: some View {
         VStack(spacing: 0) {
-            settingsRow("doc.text.fill", "Terms of use") { infoPage = .terms }
-            settingsRow("lock.shield.fill", "Privacy Policy") { infoPage = .privacy }
+            settingsRow("doc.text.fill", "Terms of use") { openURL(CX.termsURL) }
+            settingsRow("lock.shield.fill", "Privacy Policy") { openURL(CX.privacyURL) }
             settingsRow("questionmark.circle.fill", "FAQs") { infoPage = .faqs }
             settingsRow("envelope.fill", "Facing a Problem? Contact Us") { infoPage = .support }
             if SupabaseService.shared.isSignedIn {

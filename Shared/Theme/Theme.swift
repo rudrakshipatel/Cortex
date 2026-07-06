@@ -4,6 +4,10 @@ import SwiftUI
 /// Teal brand + orange CTA on a mint→peach gradient, navy stat bars.
 enum CX {
 
+    // MARK: Legal links (open the hosted pages)
+    static let termsURL   = URL(string: "https://www.cortexcases.com/terms")!
+    static let privacyURL = URL(string: "https://www.cortexcases.com/privacy")!
+
     // MARK: Core palette
     static let teal       = Color(hex: 0x16C2B0)   // brand / category
     static let tealDark   = Color(hex: 0x0FA899)

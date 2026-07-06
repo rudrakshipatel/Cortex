@@ -118,13 +118,11 @@ struct EnergyBar: View {
 // MARK: - Go Pro upsell
 struct GoProSheet: View {
     @Environment(\.dismiss) var dismiss
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var store: StoreManager
     @State private var selectedID: String?
     @State private var working = false
     @State private var message: String?
-    @State private var legal: LegalDoc?
-
-    private enum LegalDoc: String, Identifiable { case terms, privacy; var id: String { rawValue } }
 
     var body: some View {
         AppBackground {
@@ -156,9 +154,9 @@ struct GoProSheet: View {
                         Text("Auto-renewable subscription. Payment is charged to your Apple ID at confirmation. It renews automatically unless cancelled at least 24 hours before the period ends; manage or cancel anytime in Settings.")
                             .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                         HStack(spacing: 8) {
-                            Button("Terms of Use") { legal = .terms }
+                            Button("Terms of Use") { openURL(CX.termsURL) }
                             Text("·").foregroundStyle(CX.navySoft)
-                            Button("Privacy Policy") { legal = .privacy }
+                            Button("Privacy Policy") { openURL(CX.privacyURL) }
                         }
                         .font(CX.label(12).weight(.semibold)).foregroundStyle(CX.teal)
                     }
@@ -175,12 +173,6 @@ struct GoProSheet: View {
         .onAppear { selectedID = selectedID ?? store.plans.last?.id }
         .onChange(of: store.plans.count) { _, _ in
             if selectedID == nil { selectedID = store.plans.last?.id }
-        }
-        .sheet(item: $legal) { doc in
-            switch doc {
-            case .terms:   TermsOfUseView()
-            case .privacy: PrivacyPolicyView()
-            }
         }
     }
 
