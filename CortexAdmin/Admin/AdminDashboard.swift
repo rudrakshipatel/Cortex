@@ -37,6 +37,12 @@ struct AdminDashboard: View {
                 }
 
                 Section {
+                    createLink("Sync from Google Sheet", "tablecells", CX.gold) { GoogleSheetSyncView() }
+                } footer: {
+                    Text("Author cases in a shared Google Sheet, then fetch and publish new rows. Already-synced rows are skipped automatically.")
+                }
+
+                Section {
                     createLink("Emergency case", "cross.case.fill", .red) { EmergencyForm() }
                     Button { broadcastLiveNow() } label: {
                         HStack {
