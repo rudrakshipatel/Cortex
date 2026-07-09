@@ -24,13 +24,11 @@ struct GoogleSheetSyncView: View {
             Section {
                 TextField("Sheet URL or ID", text: $sheets.sheetURLOrID)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("Tab name", text: $sheets.tabName)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
                 SecureField("API key", text: $sheets.apiKey)
             } header: {
                 Text("Google Sheet")
             } footer: {
-                Text("Share the sheet as \"Anyone with the link — Viewer\", enable the Sheets API in Google Cloud Console, and create an API key restricted to it. Row content becomes readable by anyone with the link, so keep sensitive data out of the sheet.")
+                Text("Needs 7 tabs named exactly Sheet1, Tests, Correct Tests, Diagnosis, Correct Diagnosis, Treatment and Correct Treatment — see google-sheets-template.xlsx. Share the sheet as \"Anyone with the link — Viewer\", enable the Sheets API in Google Cloud Console, and create an API key restricted to it. Row content becomes readable by anyone with the link, so keep sensitive data out of the sheet.")
             }
 
             Section {
@@ -63,9 +61,9 @@ struct GoogleSheetSyncView: View {
                 Section("New rows · \(newRows.count)") {
                     ForEach(newRows) { row in
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("\(row.id) · \(row.fields["PatientName"] ?? "") · \(row.fields["Specialty"] ?? "")")
+                            Text("\(row.id) · \(row.fields["Patient info"] ?? "") · \(row.fields["Specialty"] ?? "")")
                                 .font(.subheadline.weight(.semibold))
-                            Text((row.fields["Type"] ?? "clinical").capitalized)
+                            Text("\((row.fields["Type"] ?? "clinical").capitalized) · \(row.tests.count) tests · \(row.diagnoses.count) diagnoses · \(row.treatments.count) treatments")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

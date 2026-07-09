@@ -5,6 +5,13 @@ import Foundation
 /// already accepts, so the actual import/publish validation lives in exactly
 /// one place: `CaseDTO.toModel` (see ContentImport.swift).
 ///
+/// The sheet has 7 fixed tabs (see google-sheets-template.xlsx): `Sheet1`
+/// holds one row per case; `Tests` / `Diagnosis` / `Treatment` each hold the
+/// full pool of options offered for a case (by `CaseID`); `Correct Tests` /
+/// `Correct Diagnosis` / `Correct Treatment` hold just the right answers
+/// (with, for tests, the finding + teaching note). An option that's never
+/// marked correct only needs a name — no per-distractor writing required.
+///
 /// Auth: a Sheets-restricted API key has no Google identity, so it can only
 /// read a sheet shared as "Anyone with the link — Viewer". Dedup ("don't
 /// publish an already-published row") is tracked locally by row `ID` — there
@@ -15,26 +22,22 @@ final class GoogleSheetsService: ObservableObject {
     static let shared = GoogleSheetsService()
 
     @Published var sheetURLOrID: String { didSet { defaults.set(sheetURLOrID, forKey: K.sheet) } }
-    @Published var tabName: String      { didSet { defaults.set(tabName, forKey: K.tab) } }
     @Published var apiKey: String       { didSet { defaults.set(apiKey, forKey: K.key) } }
 
     private(set) var syncedIDs: Set<String> {
         didSet { defaults.set(Array(syncedIDs), forKey: K.synced) }
     }
 
-    var isConfigured: Bool {
-        !spreadsheetID.isEmpty && !tabName.trimmed.isEmpty && !apiKey.trimmed.isEmpty
-    }
+    var isConfigured: Bool { !spreadsheetID.isEmpty && !apiKey.trimmed.isEmpty }
 
     private let defaults = UserDefaults.standard
     private enum K {
-        static let sheet = "cx.sheets.sheetURLOrID", tab = "cx.sheets.tabName"
+        static let sheet = "cx.sheets.sheetURLOrID"
         static let key = "cx.sheets.apiKey", synced = "cx.sheets.syncedIDs"
     }
 
     private init() {
         sheetURLOrID = defaults.string(forKey: K.sheet) ?? ""
-        tabName = defaults.string(forKey: K.tab) ?? "Sheet1"
         apiKey = defaults.string(forKey: K.key) ?? ""
         syncedIDs = Set(defaults.stringArray(forKey: K.synced) ?? [])
     }
@@ -51,40 +54,53 @@ final class GoogleSheetsService: ObservableObject {
         return String(rest.prefix { $0 != "/" })
     }
 
-    // MARK: - Fetch
+    // MARK: - Tabs
+
+    /// Fixed tab names the sheet must use — see google-sheets-template.xlsx.
+    private enum Tab {
+        static let cases = "Sheet1"
+        static let tests = "Tests", correctTests = "Correct Tests"
+        static let diagnosis = "Diagnosis", correctDiagnosis = "Correct Diagnosis"
+        static let treatment = "Treatment", correctTreatment = "Correct Treatment"
+        static let all = [cases, tests, correctTests, diagnosis, correctDiagnosis, treatment, correctTreatment]
+    }
 
     /// Alternate header spellings accepted alongside the canonical column
     /// names, so a slightly different sheet header still parses.
     private let headerAliases: [String: String] = ["Speciality": "Specialty"]
 
     struct Row: Identifiable {
-        var id: String            // the sheet's own "ID" column
+        var id: String            // Sheet1's own "ID" column
         var fields: [String: String]
+        var tests: [[String: Any]]
+        var diagnoses: [[String: Any]]
+        var treatments: [[String: Any]]
     }
 
     enum SheetsError: LocalizedError {
-        case notConfigured, badResponse, http(Int, String), noHeaderRow, missingID(Int)
+        case notConfigured, badResponse, http(Int, String), missingID(Int)
         var errorDescription: String? {
             switch self {
-            case .notConfigured: return "Add the sheet URL, tab name and API key first."
-            case .badResponse: return "Couldn't read the sheet's response."
+            case .notConfigured: return "Add the sheet URL and API key first."
+            case .badResponse: return "Couldn't read the sheet's response — check that all 7 tabs exist (Sheet1, Tests, Correct Tests, Diagnosis, Correct Diagnosis, Treatment, Correct Treatment)."
             case .http(let code, let msg): return "Sheets API error \(code): \(msg)"
-            case .noHeaderRow: return "The sheet has no header row."
-            case .missingID(let row): return "Row \(row) has no value in the ID column — skipped."
+            case .missingID(let row): return "Sheet1 row \(row) has no value in the ID column — skipped."
             }
         }
     }
 
-    /// Fetch every row from the configured sheet. Rows missing an `ID` are
-    /// dropped (surfaced via `warnings`); dedup against `syncedIDs` happens in
-    /// the view, since "already synced" is about what the admin does with the
-    /// row, not about the fetch itself.
+    /// Fetch every case row plus its linked test/diagnosis/treatment options
+    /// from the other 6 tabs, joined by `CaseID`. Case rows missing an `ID`
+    /// are dropped (surfaced via `warnings`); dedup against `syncedIDs`
+    /// happens in the view, since "already synced" is about what the admin
+    /// does with the row, not about the fetch itself.
     func fetchRows() async throws -> (rows: [Row], warnings: [String]) {
         guard isConfigured else { throw SheetsError.notConfigured }
-        let range = tabName.trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tabName.trimmed
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetID)/values/\(range)?key=\(apiKey.trimmed)") else {
-            throw SheetsError.badResponse
-        }
+        var comps = URLComponents(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetID)/values:batchGet")
+        comps?.queryItems = Tab.all.map { URLQueryItem(name: "ranges", value: "'\($0)'") }
+            + [URLQueryItem(name: "key", value: apiKey.trimmed)]
+        guard let url = comps?.url else { throw SheetsError.badResponse }
+
         let (data, response) = try await URLSession.shared.data(from: url)
         guard let http = response as? HTTPURLResponse else { throw SheetsError.badResponse }
         guard 200..<300 ~= http.statusCode else {
@@ -93,26 +109,129 @@ final class GoogleSheetsService: ObservableObject {
             throw SheetsError.http(http.statusCode, msg)
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let values = json["values"] as? [[Any]], let headerRow = values.first else {
-            throw SheetsError.noHeaderRow
+              let valueRanges = json["valueRanges"] as? [[String: Any]], valueRanges.count == Tab.all.count else {
+            throw SheetsError.badResponse
         }
-        let headers = headerRow.map { headerAliases["\($0)".trimmed] ?? "\($0)".trimmed }
+
+        var tableRows: [String: [[String: String]]] = [:]
+        for (name, vr) in zip(Tab.all, valueRanges) {
+            let values = (vr["values"] as? [[Any]]) ?? []
+            guard let headerRow = values.first else { tableRows[name] = []; continue }
+            let headers = headerRow.map { headerAliases["\($0)".trimmed] ?? "\($0)".trimmed }
+            tableRows[name] = values.dropFirst().map { raw in
+                let cells = raw.map { "\($0)" }
+                var fields: [String: String] = [:]
+                for (i, h) in headers.enumerated() where !h.isEmpty {
+                    fields[h] = (i < cells.count ? cells[i] : "").trimmed
+                }
+                return fields
+            }
+        }
+
+        func caseKey(_ f: [String: String]) -> String { (f["CaseID"] ?? f["ID"] ?? "").trimmed }
+        func groupByCase(_ tab: String) -> [String: [[String: String]]] {
+            Dictionary(grouping: (tableRows[tab] ?? []).filter { !caseKey($0).isEmpty }, by: caseKey)
+        }
+        let testsByCase = groupByCase(Tab.tests), correctTestsByCase = groupByCase(Tab.correctTests)
+        let diagnosisByCase = groupByCase(Tab.diagnosis), correctDiagnosisByCase = groupByCase(Tab.correctDiagnosis)
+        let treatmentByCase = groupByCase(Tab.treatment), correctTreatmentByCase = groupByCase(Tab.correctTreatment)
+
         var warnings: [String] = []
         var rows: [Row] = []
-        for (offset, raw) in values.dropFirst().enumerated() {
-            let cells = raw.map { "\($0)" }
-            var fields: [String: String] = [:]
-            for (i, h) in headers.enumerated() where !h.isEmpty {
-                fields[h] = (i < cells.count ? cells[i] : "").trimmed
-            }
+        for (offset, fields) in (tableRows[Tab.cases] ?? []).enumerated() {
             let id = (fields["ID"] ?? "").trimmed
             guard !id.isEmpty else {
                 warnings.append(SheetsError.missingID(offset + 2).localizedDescription)
                 continue
             }
-            rows.append(Row(id: id, fields: fields))
+            rows.append(Row(
+                id: id, fields: fields,
+                tests: Self.mergeTests(options: testsByCase[id] ?? [], correct: correctTestsByCase[id] ?? []),
+                diagnoses: Self.mergeSimple(options: diagnosisByCase[id] ?? [], correct: correctDiagnosisByCase[id] ?? [], flag: "correct"),
+                treatments: Self.mergeCategorized(options: treatmentByCase[id] ?? [], correct: correctTreatmentByCase[id] ?? [], flag: "appropriate")))
         }
         return (rows, warnings)
+    }
+
+    // MARK: - Options ⨝ Correct-answers merge
+    //
+    // Each "options" tab lists every choice a player can pick (decoys +
+    // correct, matched by name only); each "correct" tab supplies the flag
+    // (and, for tests, the finding + teaching note) for the right ones. An
+    // entry present only in the "correct" tab is unioned in automatically,
+    // so a typo'd/omitted option never silently loses its right answer.
+
+    private static func norm(_ s: String) -> String { s.trimmed.lowercased() }
+
+    private static func mergeTests(options: [[String: String]], correct: [[String: String]]) -> [[String: Any]] {
+        var order: [String] = []
+        var byKey: [String: [String: Any]] = [:]
+        for o in options {
+            let name = (o["Name"] ?? "").trimmed
+            guard !name.isEmpty else { continue }
+            let key = norm(name)
+            if byKey[key] == nil { order.append(key) }
+            byKey[key] = [
+                "category": (o["Category"] ?? "").trimmed, "name": name,
+                "result": "Not clinically significant for this presentation.", "helpful": false, "mentor": "",
+            ]
+        }
+        for c in correct {
+            let name = (c["Name"] ?? "").trimmed
+            guard !name.isEmpty else { continue }
+            let key = norm(name)
+            var entry = byKey[key] ?? ["category": (c["Category"] ?? "").trimmed, "name": name]
+            if !(c["Category"] ?? "").trimmed.isEmpty { entry["category"] = (c["Category"] ?? "").trimmed }
+            entry["result"] = (c["Result"] ?? "").trimmed
+            entry["mentor"] = (c["Mentor"] ?? "").trimmed
+            entry["helpful"] = true
+            if byKey[key] == nil { order.append(key) }
+            byKey[key] = entry
+        }
+        return order.compactMap { byKey[$0] }
+    }
+
+    private static func mergeSimple(options: [[String: String]], correct: [[String: String]], flag: String) -> [[String: Any]] {
+        var order: [String] = []
+        var byKey: [String: [String: Any]] = [:]
+        for o in options {
+            let name = (o["Name"] ?? "").trimmed
+            guard !name.isEmpty else { continue }
+            let key = norm(name)
+            if byKey[key] == nil { order.append(key) }
+            byKey[key] = ["name": name, flag: false]
+        }
+        for c in correct {
+            let name = (c["Name"] ?? "").trimmed
+            guard !name.isEmpty else { continue }
+            let key = norm(name)
+            if byKey[key] == nil { order.append(key) }
+            byKey[key] = ["name": name, flag: true]
+        }
+        return order.compactMap { byKey[$0] }
+    }
+
+    private static func mergeCategorized(options: [[String: String]], correct: [[String: String]], flag: String) -> [[String: Any]] {
+        var order: [String] = []
+        var byKey: [String: [String: Any]] = [:]
+        for o in options {
+            let name = (o["Name"] ?? "").trimmed
+            guard !name.isEmpty else { continue }
+            let key = norm(name)
+            if byKey[key] == nil { order.append(key) }
+            byKey[key] = ["category": (o["Category"] ?? "").trimmed, "name": name, flag: false]
+        }
+        for c in correct {
+            let name = (c["Name"] ?? "").trimmed
+            guard !name.isEmpty else { continue }
+            let key = norm(name)
+            var entry = byKey[key] ?? ["category": (c["Category"] ?? "").trimmed, "name": name]
+            if !(c["Category"] ?? "").trimmed.isEmpty { entry["category"] = (c["Category"] ?? "").trimmed }
+            entry[flag] = true
+            if byKey[key] == nil { order.append(key) }
+            byKey[key] = entry
+        }
+        return order.compactMap { byKey[$0] }
     }
 
     // MARK: - Row → BulkImportView JSON
@@ -129,7 +248,7 @@ final class GoogleSheetsService: ObservableObject {
 
         for row in rows {
             do {
-                let caseDict = try caseJSON(from: row.fields)
+                let caseDict = try caseJSON(from: row)
                 switch (row.fields["Type"] ?? "clinical").trimmed.lowercased() {
                 case "daily":
                     daily.append(["date": (row.fields["Date"] ?? "").trimmed, "case": caseDict])
@@ -156,11 +275,11 @@ final class GoogleSheetsService: ObservableObject {
         var errorDescription: String? { if case .field(let m) = self { return m }; return nil }
     }
 
-    private func caseJSON(from f: [String: String]) throws -> [String: Any] {
+    private func caseJSON(from row: Row) throws -> [String: Any] {
+        let f = row.fields
         func s(_ key: String) -> String { (f[key] ?? "").trimmed }
 
-        // "Name:Gender:Age", e.g. "Marco:Male:30 Y" — same packed-column
-        // convention as Investigation-test / Diagnosis / Treatment below.
+        // "Name:Gender:Age", e.g. "Marco:Male:30 Y".
         let patientParts = s("Patient info").components(separatedBy: ":").map(\.trimmed)
         let patientName = patientParts.first ?? ""
         let gender = patientParts.count > 1 ? patientParts[1] : ""
@@ -172,9 +291,6 @@ final class GoogleSheetsService: ObservableObject {
 
         func bullets(_ key: String) -> [String] {
             s(key).components(separatedBy: "|").map(\.trimmed).filter { !$0.isEmpty }
-        }
-        func entries(_ key: String) -> [String] {
-            s(key).components(separatedBy: ";;").map(\.trimmed).filter { !$0.isEmpty }
         }
 
         // The app shows Chief Complaint and History as separate pages, but
@@ -196,39 +312,17 @@ final class GoogleSheetsService: ObservableObject {
         let examBullets = bullets("Physical Examination")
         if !examBullets.isEmpty { dict["examination"] = ["bullets": examBullets, "mentor": ""] }
 
-        dict["tests"] = try entries("Investigation - test").map { entry -> [String: Any] in
-            let parts = entry.components(separatedBy: ":")
-            guard parts.count >= 2 else { throw RowError.field("Investigation - test entry '\(entry)' needs at least Category:Name") }
-            return [
-                "category": parts[0].trimmed, "name": parts[1].trimmed,
-                "result": parts.count > 2 ? parts[2].trimmed : "",
-                "helpful": parts.count > 3 ? parts[3].trimmed.uppercased().hasPrefix("Y") : false,
-                "mentor": parts.count > 4 ? parts[4...].joined(separator: ":").trimmed : "",
-            ]
-        }
+        guard !row.tests.isEmpty else { throw RowError.field("no rows found in the Tests tab for this CaseID") }
+        dict["tests"] = row.tests
 
-        let diagnoses = try entries("Diagnosis").map { entry -> [String: Any] in
-            let parts = entry.components(separatedBy: ":")
-            guard let name = parts.first?.trimmed, !name.isEmpty else {
-                throw RowError.field("Diagnosis entry '\(entry)' needs a Name:Y/N")
-            }
-            let correct = parts.count > 1 && parts[1].trimmed.uppercased().hasPrefix("Y")
-            return ["name": name, "correct": correct]
+        guard row.diagnoses.count >= 2 else { throw RowError.field("needs at least 2 rows in the Diagnosis tab") }
+        guard row.diagnoses.contains(where: { ($0["correct"] as? Bool) == true }) else {
+            throw RowError.field("no matching row in the Correct Diagnosis tab for this CaseID")
         }
-        guard diagnoses.count >= 2 else { throw RowError.field("needs at least 2 Diagnosis entries") }
-        guard diagnoses.contains(where: { ($0["correct"] as? Bool) == true }) else {
-            throw RowError.field("one Diagnosis entry must be marked Y (correct)")
-        }
-        dict["diagnoses"] = diagnoses
+        dict["diagnoses"] = row.diagnoses
 
-        dict["treatments"] = try entries("Treatment").map { entry -> [String: Any] in
-            let parts = entry.components(separatedBy: ":")
-            guard parts.count >= 2 else { throw RowError.field("Treatment entry '\(entry)' needs at least Category:Name") }
-            return [
-                "category": parts[0].trimmed, "name": parts[1].trimmed,
-                "appropriate": parts.count > 2 ? parts[2].trimmed.uppercased().hasPrefix("Y") : false,
-            ]
-        }
+        guard !row.treatments.isEmpty else { throw RowError.field("no rows found in the Treatment tab for this CaseID") }
+        dict["treatments"] = row.treatments
 
         if !s("OutcomeTitle").isEmpty { dict["outcomeTitle"] = s("OutcomeTitle") }
         if !s("OutcomeBody").isEmpty { dict["outcomeBody"] = s("OutcomeBody") }
