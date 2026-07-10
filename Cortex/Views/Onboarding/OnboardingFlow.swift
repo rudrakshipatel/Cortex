@@ -4,7 +4,7 @@ struct OnboardingFlow: View {
     @EnvironmentObject var app: AppState
     @State private var step: Step
 
-    enum Step { case intro, auth, country, reminder }
+    enum Step { case intro, auth, profile, country, reminder }
 
     init(startAt: Step = .intro) { _step = State(initialValue: startAt) }
 
@@ -12,7 +12,8 @@ struct OnboardingFlow: View {
         AppBackground {
             switch step {
             case .intro:    IntroCarousel { step = .auth }
-            case .auth:     AuthScreen { step = .country }
+            case .auth:     AuthScreen { step = .profile }
+            case .profile:  ProfileScreen { step = .country }
             case .country:  CountryScreen { step = .reminder }
             case .reminder: ReminderScreen { finish() }
             }
@@ -303,7 +304,93 @@ struct EmailSignInSheet: View {
     }
 }
 
-// MARK: - 3. Country
+// MARK: - 3. Name & position
+private struct ProfileScreen: View {
+    var onDone: () -> Void
+    @EnvironmentObject var app: AppState
+    @State private var name = ""
+    @State private var position: MedicalPosition = .medicalStudent
+    @State private var inviteCode = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 8) {
+                Text("Tell Us About You").font(CX.title(26))
+                    .foregroundStyle(CX.navy).multilineTextAlignment(.center)
+                Text("This personalizes your profile and cases.")
+                    .font(CX.body(15)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+            }
+            .padding(.top, 20)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your name").font(CX.heading(15)).foregroundStyle(CX.navySoft)
+                        TextField("Enter your name", text: $name)
+                            .focused($focused)
+                            .textInputAutocapitalization(.words).autocorrectionDisabled()
+                            .font(CX.body(17)).foregroundStyle(CX.navy).tint(CX.navy)
+                            .padding(16)
+                            .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Your current position").font(CX.heading(15)).foregroundStyle(CX.navySoft)
+                        VStack(spacing: 10) {
+                            ForEach(MedicalPosition.allCases) { p in
+                                Button { position = p } label: {
+                                    HStack {
+                                        Text(p.rawValue).font(CX.body(16)).foregroundStyle(CX.navy)
+                                        Spacer()
+                                        Image(systemName: position == p ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 20))
+                                            .foregroundStyle(position == p ? CX.orange : CX.hairline)
+                                    }
+                                    .padding(14)
+                                    .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(position == p ? CX.orange : CX.hairline, lineWidth: position == p ? 2 : 1.5))
+                                }
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Invite code (optional)").font(CX.heading(15)).foregroundStyle(CX.navySoft)
+                        TextField("Enter a friend's code", text: $inviteCode)
+                            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                            .font(CX.body(17)).foregroundStyle(CX.navy).tint(CX.navy)
+                            .padding(16)
+                            .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
+                        Text("Have a code from a friend? Enter it so they get credit for inviting you.")
+                            .font(CX.label(12)).foregroundStyle(CX.navySoft)
+                    }
+                }
+                .padding(.bottom, 4)
+            }
+
+            CXButton(title: "Continue") {
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { app.displayName = String(trimmed.prefix(40)) }
+                app.position = position.rawValue
+                let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                if !code.isEmpty { app.pendingInviteCode = code }   // redeemed on account bind
+                onDone()
+            }
+        }
+        .padding(.horizontal, 20).padding(.bottom, 20)
+        .onAppear {
+            if name.isEmpty { name = app.displayName }
+            // Pre-fill a code that arrived via an invite link.
+            if inviteCode.isEmpty, let pending = app.pendingInviteCode { inviteCode = pending }
+        }
+    }
+}
+
+// MARK: - 4. Country
 private struct CountryScreen: View {
     var onDone: () -> Void
     @EnvironmentObject var app: AppState
@@ -394,7 +481,7 @@ private struct CountryScreen: View {
     }
 }
 
-// MARK: - 4. Reminder
+// MARK: - 5. Reminder
 private struct ReminderScreen: View {
     var onDone: () -> Void
     @State private var pick = 0

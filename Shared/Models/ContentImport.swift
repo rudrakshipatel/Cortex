@@ -82,6 +82,7 @@ struct CaseDTO: Codable {
     var outcomeBody: String?
     var xpReward: Int?
     var mentorInsight: MentorInsightContent?
+    var vitals: Vitals?             // presenting BP / PR / RR / SpO2 / Temperature
     // Fixed clinical sections (preferred). Each → a page, in this order. If all
     // are absent, the legacy free-form `infoCards` array is used instead.
     var presentation: SectionDTO?   // → "Chief Complaint" page
@@ -92,6 +93,8 @@ struct CaseDTO: Codable {
     var teaser: String?             // narrative hook on the card
     var imageName: String?          // hero image asset name
     var difficulty: Int?            // 1…5
+    var occupation: String?         // patient occupation
+    var duration: String?           // duration of the presenting complaint
 
     /// `requireKey` is true for authored/imported cases (which must declare the
     /// correct answer) and false for server-delivered cases, which arrive with
@@ -117,9 +120,11 @@ struct CaseDTO: Codable {
             infoCards: Self.buildInfoCards(presentation: presentation, history: history,
                                            examination: examination, legacy: infoCards),
             tests: (tests ?? []).map {
-                TestOption(category: ($0.category ?? "").trimmed, name: $0.name.trimmed,
-                           result: ($0.result ?? "").trimmed, helpful: $0.helpful ?? false,
-                           mentor: ($0.mentor ?? "").trimmed)
+                let img = ($0.imageURL ?? "").trimmed
+                return TestOption(category: ($0.category ?? "").trimmed, name: $0.name.trimmed,
+                                  result: ($0.result ?? "").trimmed, helpful: $0.helpful ?? false,
+                                  mentor: ($0.mentor ?? "").trimmed,
+                                  imageURL: img.isEmpty ? nil : img)
             },
             diagnosisQuestion: (diagnosisQuestion ?? "Which diagnosis best fits this presentation?").trimmed,
             diagnoses: dx,
@@ -131,8 +136,10 @@ struct CaseDTO: Codable {
             outcomeBody: (outcomeBody ?? "").trimmed,
             xpReward: xpReward ?? 20,
             mentorInsight: (mentorInsight?.isEmpty ?? true) ? nil : mentorInsight,
+            vitals: (vitals?.isEmpty ?? true) ? nil : vitals,
             title: title?.trimmed, teaser: teaser?.trimmed,
-            imageName: imageName?.trimmed, difficulty: difficulty)
+            imageName: imageName?.trimmed, difficulty: difficulty,
+            occupation: occupation?.trimmed, duration: duration?.trimmed)
     }
 
     /// Build a DTO from a fully-formed case — used to broadcast/publish. Emits the
@@ -147,12 +154,13 @@ struct CaseDTO: Codable {
         // Bucket the case's info cards into the three named sections by title.
         for card in c.infoCards {
             let t = card.title.lowercased()
-            let s = SectionDTO(bullets: card.bullets, mentor: card.mentor)
+            let s = SectionDTO(bullets: card.bullets, mentor: card.mentor,
+                               groups: card.groups?.map { ExamGroupDTO(system: $0.system, findings: $0.findings) })
             if t.contains("history") || t.contains("hx") { history = s }
             else if t.contains("exam") { examination = s }
             else { presentation = s }
         }
-        tests = c.tests.map { TestDTO(category: $0.category, name: $0.name, result: $0.result, helpful: $0.helpful, mentor: $0.mentor) }
+        tests = c.tests.map { TestDTO(category: $0.category, name: $0.name, result: $0.result, helpful: $0.helpful, mentor: $0.mentor, imageURL: $0.imageURL) }
         diagnosisQuestion = c.diagnosisQuestion
         diagnoses = c.diagnoses.map { DiagnosisDTO(name: $0.name, correct: $0.correct) }
         treatments = c.treatments.map { TreatmentDTO(category: $0.category, name: $0.name, appropriate: $0.appropriate) }
@@ -160,7 +168,9 @@ struct CaseDTO: Codable {
         outcomeBody = c.outcomeBody
         xpReward = c.xpReward
         mentorInsight = c.mentorInsight
+        vitals = c.vitals
         title = c.title; teaser = c.teaser; imageName = c.imageName; difficulty = c.difficulty
+        occupation = c.occupation; duration = c.duration
     }
 
     /// Prefer the three named sections (titled Chief Complaint / History /
@@ -182,16 +192,32 @@ struct CaseDTO: Codable {
     private static func section(_ title: String, _ s: SectionDTO?) -> InfoCard? {
         guard let s else { return nil }
         let bullets = (s.bullets ?? []).map(\.trimmed).filter { !$0.isEmpty }
+        // System-grouped findings (e.g. physical exam) are kept as groups so the
+        // UI can render each system as a heading with its findings as sub-points.
+        let groups: [InfoGroup] = (s.groups ?? []).compactMap { g in
+            let system = g.system.trimmed
+            let findings = g.findings.map(\.trimmed).filter { !$0.isEmpty }
+            guard !system.isEmpty, !findings.isEmpty else { return nil }
+            return InfoGroup(system: system, findings: findings)
+        }
         let mentor = (s.mentor ?? "").trimmed
-        guard !bullets.isEmpty || !mentor.isEmpty else { return nil }
-        return InfoCard(title: title, bullets: bullets, mentor: mentor)
+        guard !bullets.isEmpty || !groups.isEmpty || !mentor.isEmpty else { return nil }
+        return InfoCard(title: title, bullets: bullets, mentor: mentor,
+                        groups: groups.isEmpty ? nil : groups)
     }
 }
 
-struct SectionDTO: Codable { var bullets: [String]?; var mentor: String? }
+/// A clinical section. Findings can be a flat `bullets` list and/or `groups`
+/// of system-labelled findings (e.g. physical exam by system).
+struct SectionDTO: Codable {
+    var bullets: [String]?
+    var mentor: String?
+    var groups: [ExamGroupDTO]?
+}
+struct ExamGroupDTO: Codable { var system: String; var findings: [String] }
 
 struct InfoCardDTO: Codable { var title: String; var bullets: [String]; var mentor: String? }
-struct TestDTO: Codable { var category: String?; var name: String; var result: String?; var helpful: Bool?; var mentor: String? }
+struct TestDTO: Codable { var category: String?; var name: String; var result: String?; var helpful: Bool?; var mentor: String?; var imageURL: String? }
 struct DiagnosisDTO: Codable { var name: String; var correct: Bool? }   // absent on server-stripped cases
 struct TreatmentDTO: Codable { var category: String?; var name: String; var appropriate: Bool? }
 

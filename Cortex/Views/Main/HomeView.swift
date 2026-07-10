@@ -9,6 +9,8 @@ struct HomeView: View {
     @State private var activeDayKey: Int?
     @State private var randomCase: ClinicalCase?
     @State private var showNoLife = false
+    @State private var showEmergencyPaywall = false
+    @State private var showPastCases = false
     /// After finishing a random case we chain straight into the next one; this
     /// remembers the case we just played so we don't immediately re-serve it.
     @State private var chainRandom = false
@@ -53,6 +55,9 @@ struct HomeView: View {
                                            body: "No case is scheduled for today. Daily cases are pinned to a calendar day (GMT).")
                         }
 
+                        // Unlocked once today's daily is solved: replay past dailies.
+                        if app.solvedTodaysDaily { pastCasesButton }
+
                         randomCard()
                     }
                     .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 24)
@@ -67,8 +72,10 @@ struct HomeView: View {
             })
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost). Daily and Emergency cases are always free.")
+            Text("Each case costs \(AppState.energyText(AppState.randomCaseEnergyCost)) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.energyText(AppState.proCaseEnergyCost)). Daily cases are always free.")
         }
+        .sheet(isPresented: $showEmergencyPaywall) { GoProSheet() }
+        .fullScreenCover(isPresented: $showPastCases) { PastCasesView() }
         .onReceive(ticker) { t in
             now = t
             // Poll for newly-broadcast emergencies (~every 45s) so a live one's
@@ -85,17 +92,30 @@ struct HomeView: View {
     // MARK: Cards
 
     /// Active emergency — red, with a live countdown and a blinking siren border.
+    /// Pro-only: free players see it locked and tapping opens the Go Pro sheet.
     private func emergencyCard(_ ec: EmergencyCase) -> some View {
         let c = ec.clinicalCase
         return Button {
-            activeKind = .emergency; active = c
+            if app.isPro { activeKind = .emergency; active = c }
+            else { showEmergencyPaywall = true }
         } label: {
             CXCard {
                 VStack(alignment: .leading, spacing: 10) {
-                    Image(c.heroImageName)
-                        .resizable().scaledToFill()
-                        .frame(maxWidth: .infinity).frame(height: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    ZStack(alignment: .topTrailing) {
+                        // Surgery/OR illustration for emergencies; taller so the
+                        // near-square image keeps everyone's faces in frame.
+                        Image(c.emergencyImageName)
+                            .resizable().scaledToFill()
+                            .frame(maxWidth: .infinity).frame(height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        if !app.isPro {
+                            Label("PRO", systemImage: "lock.fill")
+                                .font(CX.label(11)).foregroundStyle(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(CX.navy, in: Capsule())
+                                .padding(8)
+                        }
+                    }
                     HStack {
                         Label("EMERGENCY", systemImage: "cross.case.fill")
                             .font(CX.label(13)).foregroundStyle(.red)
@@ -110,7 +130,8 @@ struct HomeView: View {
                     Text(c.specialty).font(CX.heading(20)).foregroundStyle(CX.navy)
                     Text("\(c.patientName), \(c.age) · \(c.chiefComplaint)")
                         .font(CX.body(14)).foregroundStyle(CX.navySoft).fixedSize(horizontal: false, vertical: true)
-                    Text("Tap to respond — vanishes when the timer ends. Free to play.")
+                    Text(app.isPro ? "Tap to respond — vanishes when the timer ends."
+                                   : "Pro members only — tap to unlock emergency cases.")
                         .font(CX.label(12)).foregroundStyle(.red)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -128,12 +149,34 @@ struct HomeView: View {
         }
     }
 
+    /// Appears once today's daily is solved — opens the Past Cases calendar to
+    /// replay previous daily cases (each costs energy like a random case).
+    private var pastCasesButton: some View {
+        Button { showPastCases = true } label: {
+            CXCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "calendar").font(.system(size: 32)).foregroundStyle(CX.teal)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Solve past cases").font(CX.title(20)).foregroundStyle(CX.navy)
+                        Text("Revisit previous daily cases — \(AppState.energyText(app.randomCaseCost)) energy each.")
+                            .font(CX.body(14)).foregroundStyle(CX.navySoft)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 16, weight: .bold)).foregroundStyle(CX.teal)
+                }
+            }
+        }.buttonStyle(PressStyle())
+    }
+
     /// Ensures `randomCase` holds a valid unsolved case to preview & play. Keeps
     /// the same case stable until it's solved (so the teaser matches the button).
     /// When `excluding` is set we always re-pick, avoiding that case if any other
     /// unsolved case is available (used when chaining to the next random case).
+    /// A case scored below the review threshold sits out for 15 days, then
+    /// becomes due for review and can reappear here.
     private func ensureRandom(excluding excludeID: UUID? = nil) {
-        var unsolved = store.clinicalCases.filter { !app.isCaseSolved($0.id) }
+        var unsolved = store.clinicalCases.filter { app.availableForRandom($0.id) }
         if let ex = excludeID {
             let others = unsolved.filter { $0.id != ex }
             if !others.isEmpty { unsolved = others }
@@ -173,14 +216,23 @@ struct HomeView: View {
                 CXCard {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("RANDOM CASE", systemImage: "shuffle").font(CX.label(13)).foregroundStyle(CX.orange)
-                        Text(total == 0 ? "Add practice cases to enable this."
-                                        : "You've solved every practice case! 🎉 New ones will appear here.")
+                        Text(randomEmptyMessage(total: total))
                             .font(CX.body(15)).foregroundStyle(CX.navySoft).fixedSize(horizontal: false, vertical: true)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
         .onAppear { ensureRandom() }
+    }
+
+    /// The random-case empty state: distinguishes "nothing left to solve" from
+    /// "everything remaining is on its post-fail cooldown" so the message
+    /// doesn't wrongly claim a 100% clear.
+    private func randomEmptyMessage(total: Int) -> String {
+        guard total > 0 else { return "Add practice cases to enable this." }
+        let unfinished = store.clinicalCases.filter { !app.isCaseCompleted($0.id) }
+        if unfinished.isEmpty { return "You've completed every practice case! 🎉 New ones will appear here." }
+        return "You've attempted every remaining case recently — they'll be back to review in a couple weeks."
     }
 
     private func rewardChip(_ icon: String, _ text: String, _ color: Color) -> some View {
@@ -228,10 +280,17 @@ struct PracticeView: View {
                             EmptyStateCard(title: "No clinical cases yet",
                                            body: "The permanent case collection appears here to browse and solve anytime.")
                         } else {
-                            ForEach(store.clinicalCases) { c in
-                                DepartmentCard(dept: caseDept(c, "🩺"), solved: app.isCaseSolved(c.id),
-                                               trophy: app.caseTrophyTier(c.id),
-                                               masterySolved: app.solvedCount(in: c.specialty)) { launch(c) }
+                            // One card per specialty, showing that specialty's *next*
+                            // case. `practiceGroups` orders each specialty's cases
+                            // (unfinished → due for review → other completed), so
+                            // `.first` is the case the player gets — and once it's
+                            // solved the card automatically advances to the next one.
+                            ForEach(app.practiceGroups(store.clinicalCases), id: \.specialty) { group in
+                                if let c = group.cases.first {
+                                    DepartmentCard(dept: caseDept(c, "🩺"), solved: app.isCaseSolved(c.id),
+                                                   trophy: app.caseTrophyTier(c.id),
+                                                   masterySolved: app.solvedCount(in: group.specialty)) { launch(c) }
+                                }
                             }
                         }
                     }
@@ -241,7 +300,7 @@ struct PracticeView: View {
         }
         .fullScreenCover(item: $active) { c in CaseFlow(clinicalCase: c) }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost).")
+            Text("Each case costs \(AppState.energyText(AppState.randomCaseEnergyCost)) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.energyText(AppState.proCaseEnergyCost)).")
         }
         .onAppear { app.refreshForNewDay() }
     }
@@ -422,7 +481,7 @@ struct LeaguesView: View {
             CaseFlow(clinicalCase: c, consumesLife: true)
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost).")
+            Text("Each case costs \(AppState.energyText(AppState.randomCaseEnergyCost)) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.energyText(AppState.proCaseEnergyCost)).")
         }
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
         .alert("Promoted! 🎉", isPresented: Binding(get: { promotion != nil }, set: { if !$0 { promotion = nil } })) {
@@ -467,7 +526,7 @@ struct LeaguesView: View {
                 .buttonStyle(PushButtonStyle(face: CX.orange, lip: CX.orangeDark))
                 .padding(.top, 4)
 
-                inviteCard
+                ReferralCard()
                 learnMoreButton
             }
             .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 24)
@@ -513,7 +572,7 @@ struct LeaguesView: View {
                     }
                 }
 
-                inviteCard.padding(.top, 6)
+                ReferralCard().padding(.top, 6)
                 learnMoreButton
             }
             .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 90)
@@ -603,23 +662,6 @@ struct LeaguesView: View {
 
     // MARK: Shared pieces
 
-    private var inviteCard: some View {
-        ShareLink(item: "I've been climbing the weekly league on Cortex — real clinical cases, real ranks. Join me and let's see who tops the leaderboard! 🦊🩺") {
-            CXCard {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Invite your friends").font(CX.title(20)).foregroundStyle(CX.navy)
-                        Text("Challenge them everyday with a clinical case.")
-                            .font(CX.body(14)).foregroundStyle(CX.navySoft)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Image(systemName: "gift.fill").font(.system(size: 36)).foregroundStyle(CX.orange)
-                }
-            }
-        }.buttonStyle(.plain)
-    }
-
     private var learnMoreButton: some View {
         Button { showLearnMore = true } label: {
             Text("Learn more about Leagues").font(CX.heading(16)).foregroundStyle(CX.orange)
@@ -632,7 +674,7 @@ struct LeaguesView: View {
     // MARK: Actions
 
     private func ensureRandom() {
-        let unsolved = store.clinicalCases.filter { !app.isCaseSolved($0.id) }
+        let unsolved = store.clinicalCases.filter { app.availableForRandom($0.id) }
         if let c = randomCase, unsolved.contains(where: { $0.id == c.id }) { return }
         randomCase = unsolved.randomElement() ?? store.clinicalCases.randomElement()
     }
@@ -743,6 +785,11 @@ struct MeView: View {
                         VStack(spacing: 4) {
                             Text(app.displayName).font(CX.title(28)).foregroundStyle(CX.navy)
                             Text("June 2026").font(CX.heading(16)).foregroundStyle(CX.navySoft)
+                        }
+                        if !app.position.isEmpty {
+                            Text(app.position).font(CX.label(13)).foregroundStyle(CX.teal)
+                                .padding(.horizontal, 14).padding(.vertical, 6)
+                                .background(CX.tealSoft, in: Capsule())
                         }
                         editProfileButton
 

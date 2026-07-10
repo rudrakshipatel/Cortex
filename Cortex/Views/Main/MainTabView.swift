@@ -7,6 +7,7 @@ struct MainTabView: View {
     @EnvironmentObject var notif: NotificationManager
     @State private var tab = 0
     @State private var emergencyCase: ClinicalCase?
+    @State private var linkedCase: ClinicalCase?
 
     var body: some View {
         TabView(selection: $tab) {
@@ -34,12 +35,41 @@ struct MainTabView: View {
                 }
             }
         }
+        // Open a case shared via a "Challenge a friend" link. Both on launch
+        // (a pending id set before this view appeared) and while running.
+        .onChange(of: app.pendingCaseLink) { _, id in if id != nil { openLinkedCase() } }
+        .onAppear { if app.pendingCaseLink != nil { openLinkedCase() } }
         .fullScreenCover(item: $emergencyCase) { c in
             CaseFlow(clinicalCase: c)
+        }
+        .fullScreenCover(item: $linkedCase) { c in
+            CaseFlow(clinicalCase: c, consumesLife: false)
         }
         // Commiserate after a setback (lost streak / league demotion). Shown once;
         // queued behind any case cover so it appears when the player is back here.
         .sheet(item: $app.pendingSetback) { SetbackSheet(info: $0) }
+    }
+
+    /// Resolve the pending deep-linked case id and present it. Looks in the
+    /// already-synced content first; if it isn't there yet (cold launch before
+    /// sync, or newly published), syncs once and retries. A challenged case is
+    /// free to play (doesn't cost energy) so the invite always opens.
+    private func openLinkedCase() {
+        guard let id = app.pendingCaseLink else { return }
+        if let c = store.clinicalCases.first(where: { $0.remote?.id == id }) {
+            tab = 0
+            linkedCase = c
+            app.pendingCaseLink = nil
+            return
+        }
+        Task {
+            await SupabaseService.shared.syncContent(into: store)
+            if let c = store.clinicalCases.first(where: { $0.remote?.id == id }) {
+                tab = 0
+                linkedCase = c
+            }
+            app.pendingCaseLink = nil   // clear even if not found, so we don't loop
+        }
     }
 }
 
@@ -61,10 +91,12 @@ struct TopBar: View {
             Button { showStreak = true } label: {
                 resource("flame.fill", "\(app.streak)", .orange)
             }
+            // Subscribers get a gold "PRO" badge instead of the teal upsell.
+            // Still tappable — it opens the sheet to manage the subscription.
             Button { showPro = true } label: {
-                Text("GO PRO").font(CX.label(14)).foregroundStyle(.white)
+                Text(app.isPro ? "PRO" : "GO PRO").font(CX.label(14)).foregroundStyle(.white)
                     .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(CX.tealButton, in: Capsule())
+                    .background(app.isPro ? CX.goldButton : CX.tealButton, in: Capsule())
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
@@ -89,13 +121,13 @@ struct TopBar: View {
 
 // MARK: - Energy bar (replaces the old "lives" counter)
 struct EnergyBar: View {
-    let value: Int
-    let max: Int
+    let value: Double
+    let max: Double
     /// Optional explicit bar width; nil = compact (top bar).
     var width: CGFloat = 54
     var showsLabel = true
 
-    private var frac: Double { Swift.min(1, Swift.max(0, Double(value) / Double(Swift.max(max, 1)))) }
+    private var frac: Double { Swift.min(1, Swift.max(0, value / Swift.max(max, 1))) }
     private var fill: Color { frac > 0.5 ? .green : (frac > 0.2 ? CX.orange : .red) }
 
     var body: some View {
@@ -106,7 +138,7 @@ struct EnergyBar: View {
                 Capsule().fill(fill).frame(width: width * frac, height: 9)
             }
             if showsLabel {
-                Text("\(value)").font(CX.label(13)).foregroundStyle(CX.navy).monospacedDigit()
+                Text("\(Int(value.rounded()))").font(CX.label(13)).foregroundStyle(CX.navy).monospacedDigit()
             }
         }
         .padding(.horizontal, 11).padding(.vertical, 8)
@@ -136,7 +168,9 @@ struct GoProSheet: View {
                     CXCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Cortex Pro unlocks:").font(CX.heading(17)).foregroundStyle(CX.teal)
-                            proRow("Cases cost far less energy (12 vs 50)")
+                            proRow("Cases cost far less energy (8.5 vs 16.5)")
+                            proRow("Emergency cases")
+                            proRow("Ask AI tutor about any case (25/day)")
                             proRow("Advanced & senior-level cases")
                             proRow("High-complexity, multi-morbidity patients")
                             proRow("Full mentor reasoning on every case")
@@ -151,7 +185,9 @@ struct GoProSheet: View {
                         redeemCouponButton
                         Button("Restore Purchases") { Task { await restore() } }
                             .font(CX.label(14)).foregroundStyle(CX.teal).disabled(working)
-                        Text("Auto-renewable subscription. Payment is charged to your Apple ID at confirmation. It renews automatically unless cancelled at least 24 hours before the period ends; manage or cancel anytime in Settings.")
+                        Text(selectedPlan?.isLifetime == true
+                             ? "One-time purchase charged to your Apple ID at confirmation. Yours forever — no auto-renewal."
+                             : "Auto-renewable subscription. Payment is charged to your Apple ID at confirmation. It renews automatically unless cancelled at least 24 hours before the period ends; manage or cancel anytime in Settings.")
                             .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                         HStack(spacing: 8) {
                             Button("Terms of Use") { openURL(CX.termsURL) }
@@ -170,9 +206,9 @@ struct GoProSheet: View {
                 .padding(.horizontal, 22).padding(.bottom, 24)
             }
         }
-        .onAppear { selectedID = selectedID ?? store.plans.last?.id }
+        .onAppear { selectedID = selectedID ?? defaultPlanID }
         .onChange(of: store.plans.count) { _, _ in
-            if selectedID == nil { selectedID = store.plans.last?.id }
+            if selectedID == nil { selectedID = defaultPlanID }
         }
     }
 
@@ -209,7 +245,11 @@ struct GoProSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(plan.title).font(CX.heading(17)).foregroundStyle(CX.navy)
-                        if plan.isAnnual {
+                        if plan.isLifetime {
+                            Text("LIMITED TIME").font(CX.label(10)).foregroundStyle(.white)
+                                .padding(.horizontal, 7).padding(.vertical, 3)
+                                .background(CX.orange, in: Capsule())
+                        } else if plan.isAnnual {
                             Text("BEST VALUE").font(CX.label(10)).foregroundStyle(.white)
                                 .padding(.horizontal, 7).padding(.vertical, 3)
                                 .background(CX.teal, in: Capsule())
@@ -221,7 +261,12 @@ struct GoProSheet: View {
                     }
                 }
                 Spacer()
-                Text(plan.priceString).font(CX.heading(18)).foregroundStyle(CX.navy)
+                VStack(alignment: .trailing, spacing: 1) {
+                    if let orig = plan.originalPrice {
+                        Text(orig).font(CX.label(12)).foregroundStyle(CX.navySoft).strikethrough()
+                    }
+                    Text(plan.priceString).font(CX.heading(18)).foregroundStyle(CX.navy)
+                }
             }
             .padding(16)
             .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -231,9 +276,14 @@ struct GoProSheet: View {
     }
 
     private var selectedPlan: ProPlan? { store.plans.first { $0.id == selectedID } }
+    /// Default the picker to the annual plan (the best value), else the first.
+    private var defaultPlanID: String? {
+        store.plans.first(where: { $0.isAnnual })?.id ?? store.plans.first?.id
+    }
 
     private var subscribeButton: some View {
-        let cta = selectedPlan?.trialLabel != nil ? "Start Free Trial" : "Subscribe"
+        let cta = selectedPlan?.isLifetime == true ? "Buy Lifetime"
+                : (selectedPlan?.trialLabel != nil ? "Start Free Trial" : "Subscribe")
         return Button { Task { await subscribe() } } label: {
             HStack(spacing: 8) {
                 if working { ProgressView().tint(.white) }
@@ -269,7 +319,8 @@ struct GoProSheet: View {
         }
     }
 
-    private var cancelled: Bool { store.isPro && !store.proWillRenew }
+    // Lifetime buyers never "renew", so exclude them from the cancelled state.
+    private var cancelled: Bool { store.isPro && !store.proWillRenew && !store.isLifetimePro }
 
     private var proActiveCard: some View {
         VStack(spacing: 14) {
@@ -277,9 +328,13 @@ struct GoProSheet: View {
                 VStack(spacing: 8) {
                     Image(systemName: cancelled ? "clock.badge.xmark.fill" : "checkmark.seal.fill")
                         .font(.system(size: 34)).foregroundStyle(cancelled ? CX.orange : CX.teal)
-                    Text(cancelled ? "Subscription cancelled" : "You're Pro! 🎉")
+                    Text(store.isLifetimePro ? "Lifetime Pro 🎉"
+                         : (cancelled ? "Subscription cancelled" : "You're Pro! 🎉"))
                         .font(CX.heading(20)).foregroundStyle(CX.navy)
-                    if cancelled {
+                    if store.isLifetimePro {
+                        Text("Pro is unlocked forever — no renewals, nothing to manage.")
+                            .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                    } else if cancelled {
                         Text("It won't renew. You keep Pro\(expiryClause).")
                             .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                     } else {
@@ -288,16 +343,19 @@ struct GoProSheet: View {
                     }
                 }.frame(maxWidth: .infinity).padding(.vertical, 6)
             }
-            Button { manageSubscriptions() } label: {
-                Text(cancelled ? "Manage Subscription" : "Manage or Cancel Subscription")
-                    .font(CX.heading(16)).foregroundStyle(CX.navy)
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
-            }.buttonStyle(PressStyle())
-            if !cancelled {
-                Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
-                    .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+            // A one-time lifetime purchase has no subscription to manage/cancel.
+            if !store.isLifetimePro {
+                Button { manageSubscriptions() } label: {
+                    Text(cancelled ? "Manage Subscription" : "Manage or Cancel Subscription")
+                        .font(CX.heading(16)).foregroundStyle(CX.navy)
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
+                }.buttonStyle(PressStyle())
+                if !cancelled {
+                    Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
+                        .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
+                }
             }
         }
     }

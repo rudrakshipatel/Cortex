@@ -124,7 +124,7 @@ struct FAQsView: View {
         ("How is my XP scored?",
          "Each case is worth up to 100 XP. You earn the full 100 only for a flawless workup; your score reflects how accurate your tests, diagnosis and treatment were."),
         ("How does energy work?",
-         "Energy slowly refills over time — a little every minute, up to a full bar of 100. Each random/practice case costs 50 energy (about two on a full bar). With Pro, cases cost only 12 energy — roughly four times as many. Daily and Emergency cases are always free."),
+         "Energy slowly refills over time — a little every minute, up to a full bar of 100. Each random/practice/past case costs 16.5 energy (about six on a full bar). With Pro, cases cost only 8.5 energy — roughly twice as many. Daily cases are always free. Emergency cases don't cost energy either, but they're Pro-only. Past cases let you replay previous daily cases once you've solved today's."),
         ("What are streaks?",
          "Play at least one case a day to keep your streak alive. Hitting milestone streaks rewards bonus coins, and a Streak Freeze from the shop can protect you on a day you miss."),
         ("What do coins do?",
@@ -132,7 +132,7 @@ struct FAQsView: View {
         ("What is Cortex Pro?",
          "Pro unlocks the full experience. It's an auto-renewing subscription through your Apple ID and may include a free trial. You can cancel anytime in iOS Settings."),
         ("What are emergency cases?",
-         "Occasionally a time-sensitive \u{201C}emergency\u{201D} case appears for a few hours. Solve it while it's live for a special challenge."),
+         "Occasionally a time-sensitive \u{201C}emergency\u{201D} case appears for a few hours. Solve it while it's live for a special challenge — emergency cases are a Pro perk."),
         ("How do I report a problem?",
          "Use \u{201C}Facing a Problem? Contact Us\u{201D} on the Me page, or email \(supportEmail).")
     ]

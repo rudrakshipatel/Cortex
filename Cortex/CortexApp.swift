@@ -11,6 +11,10 @@ struct CortexApp: App {
     @StateObject private var storeManager = StoreManager()
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Configure analytics before the first screen renders, so autocaptured
+    /// screen views and lifecycle events aren't missed.
+    init() { Analytics.start() }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -20,6 +24,13 @@ struct CortexApp: App {
                 .environmentObject(storeManager)
                 .environmentObject(SupabaseService.shared)
                 .tint(CX.orange)
+                // A tapped "Challenge a friend" link (cortex://case/{id} or the
+                // https form) — stash the case id; MainTabView opens it once
+                // content is ready.
+                .onOpenURL { url in
+                    if let id = CXDeepLink.parseCaseID(from: url) { app.pendingCaseLink = id }
+                    else if let code = CXDeepLink.parseInviteCode(from: url) { app.pendingInviteCode = code }
+                }
                 // Refill Energy (and roll the league) whenever the app comes to the
                 // foreground, so a new GMT day restores energy even if the app was
                 // left open or backgrounded across midnight.
@@ -40,6 +51,18 @@ struct CortexApp: App {
                 // Mirror the real StoreKit subscription entitlement into AppState.
                 .onChange(of: storeManager.isPro) { _, pro in app.isPro = pro }
                 .task(id: storeManager.isPro) { app.isPro = storeManager.isPro }
+                // Keep the RevenueCat identity == the Supabase user, so the
+                // referral reward (a server-side promo grant) reaches this account.
+                // Analytics uses the same id so events and revenue line up.
+                .task(id: SupabaseService.shared.userId) {
+                    let uid = SupabaseService.shared.userId
+                    await storeManager.identify(uid)
+                    Analytics.identify(uid, properties: [
+                        "position": app.position,
+                        "country": app.country,
+                        "is_pro": app.isPro,
+                    ])
+                }
                 .task {
                     // Register for remote push (used to broadcast emergencies) and
                     // pull any content published to all users.

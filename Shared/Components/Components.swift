@@ -181,14 +181,20 @@ struct MentorCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             DrVix(pose: .idea, size: 46)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("MENTOR INSIGHT")
                     .font(CX.label(11))
                     .foregroundStyle(CX.orange)
-                Text(text)
-                    .font(CX.body(15))
-                    .foregroundStyle(CX.navy)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Each insight renders as its own point.
+                ForEach(Array(text.bulletPoints.enumerated()), id: \.offset) { _, point in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle().fill(CX.teal).frame(width: 5, height: 5).padding(.top, 7)
+                        Text(point)
+                            .font(CX.body(15))
+                            .foregroundStyle(CX.navy)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
         .padding(14)
@@ -202,42 +208,72 @@ struct MentorCard: View {
     }
 }
 
-/// Dr. Vix's in-case hint — a Cortex Pro feature. Pro players see the hint;
-/// free players see it locked (upgrade via GO PRO in the top bar).
+/// Dr. Vix's in-case hint. Pro players tap to reveal it for free; free players
+/// pay `mentorInsightUnlockCost` coins once to unlock every hint in the case.
 struct MentorInsight: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var session: CaseSession
     var text: String
+    @State private var proRevealed = false
+
+    private var cost: Int { AppState.mentorInsightUnlockCost }
 
     var body: some View {
         if app.isPro {
+            if proRevealed { MentorCard(text: text) }
+            else {
+                teaser(icon: "hand.tap.fill",
+                       message: "Tap to see mentor insight.",
+                       accessory: nil, dashed: true) {
+                    withAnimation(.easeInOut(duration: 0.2)) { proRevealed = true }
+                }
+            }
+        } else if session.mentorUnlocked {
             MentorCard(text: text)
+        } else if app.coins >= cost {
+            teaser(icon: "lock.fill",
+                   message: "Unlock Dr. Vix's insight for this case.",
+                   accessory: coinPill, dashed: true) {
+                if app.spendCoins(cost) {
+                    withAnimation(.easeInOut(duration: 0.2)) { session.mentorUnlocked = true }
+                }
+            }
         } else {
-            ProLockedMentorCard()
+            // Can't afford it — nudge toward Pro (which reveals for free).
+            teaser(icon: "lock.fill",
+                   message: "Need \(cost) coins to unlock — or Go Pro to reveal free.",
+                   accessory: nil, dashed: true, action: nil)
         }
     }
-}
 
-private struct ProLockedMentorCard: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+    private var coinPill: AnyView {
+        AnyView(
+            HStack(spacing: 5) {
+                Image(systemName: "dollarsign.circle.fill").font(.system(size: 14)).foregroundStyle(CX.gold)
+                Text("\(cost)").font(CX.label(13).weight(.bold)).foregroundStyle(CX.navy)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.white, in: Capsule())
+            .overlay(Capsule().stroke(CX.gold.opacity(0.5), lineWidth: 1.5))
+        )
+    }
+
+    /// The locked/teaser card. When `action` is nil it's non-interactive.
+    @ViewBuilder
+    private func teaser(icon: String, message: String, accessory: AnyView?,
+                        dashed: Bool, action: (() -> Void)?) -> some View {
+        let content = HStack(alignment: .center, spacing: 12) {
             ZStack {
-                DrVix(pose: .idea, size: 46).opacity(0.45).grayscale(0.6)
-                Image(systemName: "lock.fill").font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(CX.navySoft)
+                DrVix(pose: .idea, size: 46).opacity(0.55).grayscale(0.5)
+                Image(systemName: icon).font(.system(size: 15, weight: .bold)).foregroundStyle(CX.navySoft)
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("MENTOR INSIGHT").font(CX.label(11)).foregroundStyle(CX.orange)
-                Text("Dr. Vix's hints are a Cortex Pro feature. Go Pro to unlock them on every case.")
-                    .font(CX.body(14)).foregroundStyle(CX.navySoft)
+                Text(message).font(CX.body(14)).foregroundStyle(CX.navySoft)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    Image(systemName: "crown.fill").font(.system(size: 12))
-                    Text("Cortex Pro").font(CX.label(12).weight(.bold))
-                }
-                .foregroundStyle(CX.teal)
             }
             Spacer(minLength: 0)
+            if let accessory { accessory }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -245,8 +281,15 @@ private struct ProLockedMentorCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(CX.teal.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .stroke(CX.teal.opacity(0.35),
+                        style: StrokeStyle(lineWidth: 1.5, dash: dashed ? [5, 4] : []))
         )
+
+        if let action {
+            Button(action: action) { content }.buttonStyle(PressStyle())
+        } else {
+            content
+        }
     }
 }
 

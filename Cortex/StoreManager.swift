@@ -1,14 +1,18 @@
 import Foundation
 import RevenueCat
 
-/// A simplified, view-friendly subscription plan derived from a RevenueCat package.
+/// A simplified, view-friendly plan derived from a RevenueCat package.
 struct ProPlan: Identifiable {
     let id: String            // RevenueCat package identifier
     let title: String
     let priceString: String   // e.g. "$4.99"
     let periodLabel: String   // e.g. "$4.99 / month"
     let isAnnual: Bool
-    let trialLabel: String?   // e.g. "7-day free trial" if this plan has an intro offer
+    let isLifetime: Bool       // one-time purchase (non-consumable) → Pro forever
+    let trialLabel: String?   // e.g. "3-day free trial" if this plan has an intro offer
+    /// A struck-through "original" price for the promo, from RevenueCat offering
+    /// metadata (nil = show no strikethrough).
+    let originalPrice: String?
     let package: Package      // underlying RevenueCat package for purchase
 }
 
@@ -22,6 +26,9 @@ struct ProPlan: Identifiable {
 final class StoreManager: ObservableObject {
     @Published private(set) var plans: [ProPlan] = []
     @Published private(set) var isPro = false
+    /// True when Pro came from the one-time lifetime purchase (never expires,
+    /// nothing to renew or cancel).
+    @Published private(set) var isLifetimePro = false
     /// Whether the active subscription will auto-renew. False once the user has
     /// cancelled (they keep Pro until `proExpiration`).
     @Published private(set) var proWillRenew = false
@@ -55,15 +62,34 @@ final class StoreManager: ObservableObject {
         guard RevenueCatConfig.isConfigured else { loadFailed = true; return }
         do {
             let offerings = try await Purchases.shared.offerings()
-            let packages = offerings.current?.availablePackages ?? []
+            let current = offerings.current
+            let packages = current?.availablePackages ?? []
+            // Promo "original" prices come from the offering's metadata, so they
+            // can be changed in the RevenueCat dashboard without an app update.
+            // Keys: "original_price_monthly", "original_price_annual".
+            let meta = current?.metadata ?? [:]
             plans = packages
-                .map { ProPlan(package: $0) }
+                .map { ProPlan(package: $0,
+                               originalPrice: Self.originalPrice(for: $0, metadata: meta)) }
                 .sorted { $0.package.storeProduct.price < $1.package.storeProduct.price }
             loadFailed = plans.isEmpty
         } catch {
             plans = []
             loadFailed = true
         }
+    }
+
+    /// The struck-through original price for a package, pulled from offering
+    /// metadata by period (monthly / annual). Lifetime shows no strikethrough.
+    private static func originalPrice(for package: Package, metadata: [String: Any]) -> String? {
+        let key: String
+        switch package.packageType {
+        case .annual:  key = "original_price_annual"
+        case .monthly: key = "original_price_monthly"
+        default:       return nil
+        }
+        let value = metadata[key] as? String
+        return (value?.isEmpty ?? true) ? nil : value
     }
 
     // MARK: Purchase / restore
@@ -85,6 +111,24 @@ final class StoreManager: ObservableObject {
         guard RevenueCatConfig.isConfigured else { return }
         if let info = try? await Purchases.shared.restorePurchases() {
             apply(info)
+        }
+    }
+
+    /// Tie the RevenueCat identity to the signed-in Supabase user, so a
+    /// server-side promotional grant (the referral reward) reaches the right
+    /// account. Pass the Supabase uid on sign-in, or nil on sign-out.
+    func identify(_ appUserID: String?) async {
+        guard RevenueCatConfig.isConfigured else { return }
+        do {
+            if let id = appUserID, !id.isEmpty {
+                let (info, _) = try await Purchases.shared.logIn(id)
+                apply(info)
+            } else if !Purchases.shared.isAnonymous {
+                let info = try await Purchases.shared.logOut()
+                apply(info)
+            }
+        } catch {
+            // Non-fatal: entitlement still refreshes via customerInfoStream.
         }
     }
 
@@ -110,6 +154,8 @@ final class StoreManager: ObservableObject {
         isPro = ent?.isActive == true
         proWillRenew = ent?.willRenew ?? false
         proExpiration = ent?.expirationDate
+        // A non-consumable (lifetime) entitlement is active with no expiry.
+        isLifetimePro = ent?.isActive == true && ent?.expirationDate == nil
     }
 
     /// React to entitlement changes (renewals, expirations, cross-device restores).
@@ -124,12 +170,25 @@ final class StoreManager: ObservableObject {
 }
 
 private extension ProPlan {
-    init(package: Package) {
+    init(package: Package, originalPrice: String?) {
         let product = package.storeProduct
         self.id = package.identifier
-        self.title = product.localizedTitle.isEmpty ? package.identifier.capitalized : product.localizedTitle
-        self.priceString = product.localizedPriceString
         self.isAnnual = package.packageType == .annual
+        // Lifetime = a one-time non-consumable (no subscription period).
+        let lifetime = package.packageType == .lifetime || product.subscriptionPeriod == nil
+        self.isLifetime = lifetime
+        self.priceString = product.localizedPriceString
+        self.originalPrice = originalPrice
+
+        if lifetime {
+            self.title = product.localizedTitle.isEmpty ? "Lifetime" : product.localizedTitle
+            self.periodLabel = "One-time — yours forever"
+            self.trialLabel = nil          // no trials on a one-time purchase
+            self.package = package
+            return
+        }
+
+        self.title = product.localizedTitle.isEmpty ? package.identifier.capitalized : product.localizedTitle
         if let period = product.subscriptionPeriod {
             let unit: String
             switch period.unit {
@@ -148,13 +207,13 @@ private extension ProPlan {
             let p = intro.subscriptionPeriod
             let unit: String
             switch p.unit {
-            case .day:   unit = p.value == 1 ? "day" : "day"
+            case .day:   unit = "day"
             case .week:  unit = "week"
-            case .month: unit = p.value == 1 ? "month" : "month"
+            case .month: unit = "month"
             case .year:  unit = "year"
             @unknown default: unit = "day"
             }
-            // e.g. "7-day free trial" / "1-week free trial"
+            // e.g. "3-day free trial" / "1-week free trial"
             self.trialLabel = "\(p.value)-\(unit) free trial"
         } else {
             self.trialLabel = nil
