@@ -707,6 +707,75 @@ final class SupabaseService: ObservableObject {
         signOutPlayer()
     }
 
+    // MARK: - Referrals (invite 10 friends → 1 free month)
+
+    struct ReferralStats { var code: String; var count: Int; var rewardGranted: Bool }
+    /// Friends who must sign up with your code to earn the reward.
+    static let referralGoal = 10
+
+    /// The signed-in user's invite code, confirmed-friend count and whether the
+    /// free month's already been claimed. Nil if not signed in / not configured.
+    func referralStats() async -> ReferralStats? {
+        guard isConfigured, isSignedIn,
+              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/referral_stats",
+                                              body: Data("{}".utf8), player: true),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let code = obj["code"] as? String else { return nil }
+        return ReferralStats(code: code,
+                             count: (obj["count"] as? NSNumber)?.intValue ?? 0,
+                             rewardGranted: (obj["reward_granted"] as? Bool) ?? false)
+    }
+
+    /// Attribute the signed-in (new) user to an inviter's code. Returns true
+    /// only on a fresh redeem; false for a bad/duplicate/self code.
+    @discardableResult
+    func redeemReferral(code: String) async -> Bool {
+        guard isConfigured, isSignedIn,
+              let body = try? JSONSerialization.data(withJSONObject: ["p_code": code]),
+              let (data, _) = try? await send(method: "POST", path: "rest/v1/rpc/redeem_referral",
+                                              body: body, player: true),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return (obj["ok"] as? Bool) == true
+    }
+
+    /// Claim the free month through the `grant-referral-reward` Edge Function
+    /// (it server-verifies the friend count, then grants the RevenueCat promo).
+    /// Returns a user-facing error string on failure, nil on success.
+    func claimReferralReward() async -> String? {
+        guard isConfigured, isSignedIn else { return "Please sign in first." }
+        do {
+            _ = try await send(method: "POST", path: "functions/v1/grant-referral-reward",
+                               body: Data("{}".utf8), player: true)
+            return nil
+        } catch let SBError.http(_, msg) {
+            if let d = msg.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               let err = obj["error"] as? String { return err }
+            return "Couldn't claim your reward right now. Please try again."
+        } catch {
+            return "Couldn't claim your reward right now. Please try again."
+        }
+    }
+
+    // MARK: - Case images (Supabase Storage)
+
+    /// Public bucket holding investigation result images (see case_images.sql).
+    static let caseImageBucket = "case-images"
+
+    /// Upload an investigation result image (JPEG bytes) and return its public
+    /// URL, ready to store on the test. Requires admin sign-in — the bucket
+    /// allows public reads but only admin writes.
+    func uploadCaseImage(_ jpeg: Data) async throws -> String {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        let name = "\(UUID().uuidString.lowercased()).jpg"
+        _ = try await send(method: "POST",
+                           path: "storage/v1/object/\(Self.caseImageBucket)/\(name)",
+                           body: jpeg, admin: true,
+                           extraHeaders: ["Content-Type": "image/jpeg"])
+        return "\(SupabaseConfig.url)/storage/v1/object/public/\(Self.caseImageBucket)/\(name)"
+    }
+
     // MARK: - HTTP core
     @discardableResult
     private func send(method: String, path: String, body: Data? = nil,
