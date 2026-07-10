@@ -55,7 +55,11 @@ final class GoogleSheetsService: ObservableObject {
 
     /// Alternate header spellings accepted alongside the canonical column
     /// names, so a slightly different sheet header still parses.
-    private let headerAliases: [String: String] = ["Speciality": "Specialty"]
+    private let headerAliases: [String: String] = [
+        "Speciality": "Specialty",
+        "SpO₂": "SpO2", "Spo2": "SpO2", "SPO2": "SpO2",
+        "Temp": "Temperature", "Temperature (°C)": "Temperature",
+    ]
 
     struct Row: Identifiable {
         var id: String            // the sheet's own "ID" column
@@ -192,6 +196,14 @@ final class GoogleSheetsService: ObservableObject {
             "diagnosisQuestion": s("DiagnosisQuestion"),
         ]
         if !s("Case name").isEmpty { dict["title"] = s("Case name") }
+
+        // Presenting vitals — each optional; drop the object if all are blank.
+        let vitals: [String: String] = [
+            "bp": s("BP"), "pr": s("PR"), "rr": s("RR"),
+            "spo2": s("SpO2"), "temperature": s("Temperature"),
+        ].filter { !$0.value.isEmpty }
+        if !vitals.isEmpty { dict["vitals"] = vitals }
+
         dict["history"] = ["bullets": historyBullets, "mentor": ""]
         let examBullets = bullets("Physical Examination")
         if !examBullets.isEmpty { dict["examination"] = ["bullets": examBullets, "mentor": ""] }
