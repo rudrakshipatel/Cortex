@@ -932,7 +932,9 @@ extension ClinicalCase {
     /// case, so the same emergency always shows the same one.
     var emergencyImageName: String {
         if let n = imageName?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
-        let surgery = [9, 10]
+        // Operating-theatre / critical-care illustrations, all showing faces
+        // clearly (9,10,18,19 = OR; 21,22,23,32 = ICU / emergency bay).
+        let surgery = [9, 10, 18, 19, 21, 22, 23, 32]
         var h: UInt64 = 1469598103934665603
         for b in (specialty + "|" + patientName + "|" + chiefComplaint).utf8 {
             h = (h ^ UInt64(b)) &* 1099511628211
@@ -941,9 +943,11 @@ extension ClinicalCase {
     }
 
     /// Illustration numbers (case-img-N) whose depicted patient roughly matches
-    /// the given gender + age. The bundled images depict, in order:
+    /// the given gender + age. The bundled images depict:
     /// 1,11 young woman · 2 elderly man · 3,4 mother+baby · 5 elderly woman ·
-    /// 6 boy · 7 girl · 8 adult man · 9 surgery (adult) · 10 surgery (elderly man).
+    /// 6 boy · 7 girl · 8 adult man · 9,10,18,19 surgery/OR · 12,13 pregnant woman ·
+    /// 14 girl · 15,16,26 boy · 17,20,21,23,24,25,30 adult man · 22,27,32 older man ·
+    /// 29 adult woman · 28,31 clinic/family (no single patient — safe anywhere).
     static func imageCandidates(gender: String, age: String) -> [Int] {
         let g = gender.lowercased()
         let female = g.hasPrefix("f")
@@ -957,11 +961,16 @@ extension ClinicalCase {
             let n = Int(digits) ?? 30
             group = n <= 1 ? 0 : (n < 13 ? 1 : (n < 60 ? 2 : 3))
         }
+        let neutral = [28, 31]   // clinic/family scenes with no specific patient
         switch group {
-        case 0:  return [3, 4]                                              // baby / infant
-        case 1:  return female ? [7] : (male ? [6] : [6, 7])               // child
-        case 2:  return female ? [1, 11] : (male ? [8, 9] : [1, 8, 9, 11]) // adult
-        default: return female ? [5] : (male ? [2, 10] : [2, 5, 10])       // elderly
+        case 0:  return [3, 4]                                                        // baby / infant
+        case 1:  return female ? [7, 14] : (male ? [6, 15, 16, 26] : [6, 7, 14, 15, 16, 26])  // child
+        case 2:                                                                        // adult
+            let f = [1, 11, 12, 13, 29], m = [8, 17, 20, 21, 23, 24, 25, 30]
+            return (female ? f : (male ? m : f + m)) + neutral
+        default:                                                                       // elderly
+            let f = [5], m = [2, 22, 27, 32]
+            return (female ? f : (male ? m : f + m)) + neutral
         }
     }
 
