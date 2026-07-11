@@ -8,7 +8,6 @@ struct ProPlan: Identifiable {
     let priceString: String   // e.g. "$4.99"
     let periodLabel: String   // e.g. "$4.99 / month"
     let isAnnual: Bool
-    let isLifetime: Bool       // one-time purchase (non-consumable) → Pro forever
     let trialLabel: String?   // e.g. "3-day free trial" if this plan has an intro offer
     /// A struck-through "original" price for the promo, from RevenueCat offering
     /// metadata (nil = show no strikethrough).
@@ -26,9 +25,6 @@ struct ProPlan: Identifiable {
 final class StoreManager: ObservableObject {
     @Published private(set) var plans: [ProPlan] = []
     @Published private(set) var isPro = false
-    /// True when Pro came from the one-time lifetime purchase (never expires,
-    /// nothing to renew or cancel).
-    @Published private(set) var isLifetimePro = false
     /// Whether the active subscription will auto-renew. False once the user has
     /// cancelled (they keep Pro until `proExpiration`).
     @Published private(set) var proWillRenew = false
@@ -154,8 +150,6 @@ final class StoreManager: ObservableObject {
         isPro = ent?.isActive == true
         proWillRenew = ent?.willRenew ?? false
         proExpiration = ent?.expirationDate
-        // A non-consumable (lifetime) entitlement is active with no expiry.
-        isLifetimePro = ent?.isActive == true && ent?.expirationDate == nil
     }
 
     /// React to entitlement changes (renewals, expirations, cross-device restores).
@@ -174,20 +168,8 @@ private extension ProPlan {
         let product = package.storeProduct
         self.id = package.identifier
         self.isAnnual = package.packageType == .annual
-        // Lifetime = a one-time non-consumable (no subscription period).
-        let lifetime = package.packageType == .lifetime || product.subscriptionPeriod == nil
-        self.isLifetime = lifetime
         self.priceString = product.localizedPriceString
         self.originalPrice = originalPrice
-
-        if lifetime {
-            self.title = product.localizedTitle.isEmpty ? "Lifetime" : product.localizedTitle
-            self.periodLabel = "One-time — yours forever"
-            self.trialLabel = nil          // no trials on a one-time purchase
-            self.package = package
-            return
-        }
-
         self.title = product.localizedTitle.isEmpty ? package.identifier.capitalized : product.localizedTitle
         if let period = product.subscriptionPeriod {
             let unit: String

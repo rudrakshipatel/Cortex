@@ -185,9 +185,7 @@ struct GoProSheet: View {
                         redeemCouponButton
                         Button("Restore Purchases") { Task { await restore() } }
                             .font(CX.label(14)).foregroundStyle(CX.teal).disabled(working)
-                        Text(selectedPlan?.isLifetime == true
-                             ? "One-time purchase charged to your Apple ID at confirmation. Yours forever — no auto-renewal."
-                             : "Auto-renewable subscription. Payment is charged to your Apple ID at confirmation. It renews automatically unless cancelled at least 24 hours before the period ends; manage or cancel anytime in Settings.")
+                        Text("Auto-renewable subscription. Payment is charged to your Apple ID at confirmation. It renews automatically unless cancelled at least 24 hours before the period ends; manage or cancel anytime in Settings.")
                             .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                         HStack(spacing: 8) {
                             Button("Terms of Use") { openURL(CX.termsURL) }
@@ -245,11 +243,7 @@ struct GoProSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(plan.title).font(CX.heading(17)).foregroundStyle(CX.navy)
-                        if plan.isLifetime {
-                            Text("LIMITED TIME").font(CX.label(10)).foregroundStyle(.white)
-                                .padding(.horizontal, 7).padding(.vertical, 3)
-                                .background(CX.orange, in: Capsule())
-                        } else if plan.isAnnual {
+                        if plan.isAnnual {
                             Text("BEST VALUE").font(CX.label(10)).foregroundStyle(.white)
                                 .padding(.horizontal, 7).padding(.vertical, 3)
                                 .background(CX.teal, in: Capsule())
@@ -282,8 +276,7 @@ struct GoProSheet: View {
     }
 
     private var subscribeButton: some View {
-        let cta = selectedPlan?.isLifetime == true ? "Buy Lifetime"
-                : (selectedPlan?.trialLabel != nil ? "Start Free Trial" : "Subscribe")
+        let cta = selectedPlan?.trialLabel != nil ? "Start Free Trial" : "Subscribe"
         return Button { Task { await subscribe() } } label: {
             HStack(spacing: 8) {
                 if working { ProgressView().tint(.white) }
@@ -319,8 +312,7 @@ struct GoProSheet: View {
         }
     }
 
-    // Lifetime buyers never "renew", so exclude them from the cancelled state.
-    private var cancelled: Bool { store.isPro && !store.proWillRenew && !store.isLifetimePro }
+    private var cancelled: Bool { store.isPro && !store.proWillRenew }
 
     private var proActiveCard: some View {
         VStack(spacing: 14) {
@@ -328,13 +320,9 @@ struct GoProSheet: View {
                 VStack(spacing: 8) {
                     Image(systemName: cancelled ? "clock.badge.xmark.fill" : "checkmark.seal.fill")
                         .font(.system(size: 34)).foregroundStyle(cancelled ? CX.orange : CX.teal)
-                    Text(store.isLifetimePro ? "Lifetime Pro 🎉"
-                         : (cancelled ? "Subscription cancelled" : "You're Pro! 🎉"))
+                    Text(cancelled ? "Subscription cancelled" : "You're Pro! 🎉")
                         .font(CX.heading(20)).foregroundStyle(CX.navy)
-                    if store.isLifetimePro {
-                        Text("Pro is unlocked forever — no renewals, nothing to manage.")
-                            .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
-                    } else if cancelled {
+                    if cancelled {
                         Text("It won't renew. You keep Pro\(expiryClause).")
                             .font(CX.body(14)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
                     } else {
@@ -343,19 +331,16 @@ struct GoProSheet: View {
                     }
                 }.frame(maxWidth: .infinity).padding(.vertical, 6)
             }
-            // A one-time lifetime purchase has no subscription to manage/cancel.
-            if !store.isLifetimePro {
-                Button { manageSubscriptions() } label: {
-                    Text(cancelled ? "Manage Subscription" : "Manage or Cancel Subscription")
-                        .font(CX.heading(16)).foregroundStyle(CX.navy)
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
-                }.buttonStyle(PressStyle())
-                if !cancelled {
-                    Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
-                        .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
-                }
+            Button { manageSubscriptions() } label: {
+                Text(cancelled ? "Manage Subscription" : "Manage or Cancel Subscription")
+                    .font(CX.heading(16)).foregroundStyle(CX.navy)
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(CX.hairline, lineWidth: 1.5))
+            }.buttonStyle(PressStyle())
+            if !cancelled {
+                Text("Cancelling stops the next renewal — you keep Pro until the current period ends.")
+                    .font(CX.label(11)).foregroundStyle(CX.navySoft).multilineTextAlignment(.center)
             }
         }
     }
