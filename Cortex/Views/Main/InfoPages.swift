@@ -7,7 +7,7 @@ import SwiftUI
 // header + layout so they stay visually consistent with the rest of Cortex.
 
 /// Contact address used by the Support screen and legal pages.
-private let supportEmail = "rudrakshikpatel2007@gmail.com"
+private let supportEmail = "rudrakshi1509@gmail.com"
 
 /// A titled, dismissable, scrollable container used by every info page.
 private struct InfoPage<Content: View>: View {
