@@ -170,6 +170,10 @@ final class ContentStore: ObservableObject {
     private func save() {
         let payload = Payload(clinical: clinicalCases, daily: dailyCases, emergencies: emergencies)
         guard let data = try? JSONEncoder().encode(payload) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        // Encrypt at rest via Data Protection. `.completeUntilFirstUserAuthentication`
+        // keeps the file readable throughout normal use (it loads at launch, which
+        // is always after the first post-boot unlock) while making it unreadable to
+        // offline disk extraction from a locked, powered-off device.
+        try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }

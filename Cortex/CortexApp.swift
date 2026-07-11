@@ -74,6 +74,8 @@ struct CortexApp: App {
                     await SupabaseService.shared.submitScore(
                         playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP)
                 }
+                // Hide clinical content from the app-switcher snapshot / backgrounding.
+                .privacyCoverWhenInactive()
         }
     }
 }
@@ -83,22 +85,34 @@ struct RootView: View {
     @EnvironmentObject var sb: SupabaseService
     var body: some View {
         Group {
+            #if DEBUG
+            // Screenshot-only screen router. Compiled out of Release entirely, so
+            // the routing table and its seed data never ship in the store binary.
             if let key = ProcessInfo.processInfo.environment["CX_SCREEN"], !key.isEmpty {
-                DebugRouter(key: key)                 // verification-only, off in production
-            } else if !sb.isSignedIn && !app.onboarded {
-                OnboardingFlow(startAt: .intro)       // first run: sign-in is optional (can skip)
-            } else if app.isSyncing {
-                SyncingScreen()                       // loading this account's cloud profile
-            } else if !app.onboarded {
-                OnboardingFlow(startAt: .country)     // new account finishes onboarding
+                DebugRouter(key: key)
             } else {
-                MainTabView()
+                mainContent
             }
+            #else
+            mainContent
+            #endif
         }
         .transition(.opacity)
         .animation(.easeInOut, value: sb.isSignedIn)
         .animation(.easeInOut, value: app.isSyncing)
         .animation(.easeInOut, value: app.onboarded)
+    }
+
+    @ViewBuilder private var mainContent: some View {
+        if !sb.isSignedIn && !app.onboarded {
+            OnboardingFlow(startAt: .intro)           // first run: sign-in is optional (can skip)
+        } else if app.isSyncing {
+            SyncingScreen()                           // loading this account's cloud profile
+        } else if !app.onboarded {
+            OnboardingFlow(startAt: .country)         // new account finishes onboarding
+        } else {
+            MainTabView()
+        }
     }
 }
 
@@ -115,8 +129,10 @@ struct SyncingScreen: View {
     }
 }
 
+#if DEBUG
 /// Renders a single screen selected by the CX_SCREEN launch env var so each
-/// screen can be screenshotted without UI automation. Inert unless the var is set.
+/// screen can be screenshotted without UI automation. Debug builds only — this
+/// whole type is compiled out of Release.
 struct DebugRouter: View {
     let key: String
     var body: some View {
@@ -142,3 +158,4 @@ struct DebugRouter: View {
         }
     }
 }
+#endif

@@ -16,7 +16,9 @@ final class GoogleSheetsService: ObservableObject {
 
     @Published var sheetURLOrID: String { didSet { defaults.set(sheetURLOrID, forKey: K.sheet) } }
     @Published var tabName: String      { didSet { defaults.set(tabName, forKey: K.tab) } }
-    @Published var apiKey: String       { didSet { defaults.set(apiKey, forKey: K.key) } }
+    /// The Sheets API key is a credential, so it lives in the Keychain (encrypted,
+    /// not backed up), never in the plaintext UserDefaults plist.
+    @Published var apiKey: String       { didSet { Keychain.set(apiKey.isEmpty ? nil : apiKey, for: K.key) } }
 
     private(set) var syncedIDs: Set<String> {
         didSet { defaults.set(Array(syncedIDs), forKey: K.synced) }
@@ -32,10 +34,28 @@ final class GoogleSheetsService: ObservableObject {
         static let key = "cx.sheets.apiKey", synced = "cx.sheets.syncedIDs"
     }
 
+    /// In-memory-only session so the sheet response (and the API-key header)
+    /// never land in an on-disk URL cache. TLS 1.2 floor stated explicitly.
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.urlCache = nil
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.httpCookieStorage = nil
+        cfg.httpShouldSetCookies = false
+        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        return URLSession(configuration: cfg)
+    }()
+
     private init() {
         sheetURLOrID = defaults.string(forKey: K.sheet) ?? ""
         tabName = defaults.string(forKey: K.tab) ?? "Sheet1"
-        apiKey = defaults.string(forKey: K.key) ?? ""
+        // One-time migration: move any key an older build left in UserDefaults
+        // into the Keychain, then scrub it from the plist.
+        if Keychain.get(K.key) == nil, let legacy = defaults.string(forKey: K.key), !legacy.isEmpty {
+            Keychain.set(legacy, for: K.key)
+        }
+        defaults.removeObject(forKey: K.key)
+        apiKey = Keychain.get(K.key) ?? ""
         syncedIDs = Set(defaults.stringArray(forKey: K.synced) ?? [])
     }
 
@@ -86,10 +106,14 @@ final class GoogleSheetsService: ObservableObject {
     func fetchRows() async throws -> (rows: [Row], warnings: [String]) {
         guard isConfigured else { throw SheetsError.notConfigured }
         let range = tabName.trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tabName.trimmed
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetID)/values/\(range)?key=\(apiKey.trimmed)") else {
+        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetID)/values/\(range)") else {
             throw SheetsError.badResponse
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        // Pass the API key in a header, not the query string, so it can't leak
+        // into proxy/server logs or the URL cache the way `?key=…` would.
+        var req = URLRequest(url: url)
+        req.setValue(apiKey.trimmed, forHTTPHeaderField: "X-goog-api-key")
+        let (data, response) = try await Self.session.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw SheetsError.badResponse }
         guard 200..<300 ~= http.statusCode else {
             let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])

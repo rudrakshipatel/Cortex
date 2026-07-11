@@ -17,6 +17,9 @@ enum Keychain {
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            // Use the modern data-protection keychain explicitly (the default on
+            // iOS) so behaviour is unambiguous and consistent across platforms.
+            kSecUseDataProtectionKeychain as String: true,
         ]
     }
 

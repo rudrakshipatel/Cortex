@@ -17,6 +17,8 @@ struct CortexAdminApp: App {
                 .environmentObject(store)
                 .environmentObject(SupabaseService.shared)
                 .tint(CX.orange)
+                // Keep answer keys / the dashboard out of the app-switcher snapshot.
+                .privacyCoverWhenInactive()
         }
     }
 }

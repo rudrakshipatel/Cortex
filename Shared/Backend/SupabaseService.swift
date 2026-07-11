@@ -99,7 +99,7 @@ final class SupabaseService: ObservableObject {
         req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "create_user": true])
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await Self.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw SBError.http((resp as? HTTPURLResponse)?.statusCode ?? 0,
                                Self.authError(data) ?? "Couldn't send the code. Check the email and try again.")
@@ -115,7 +115,7 @@ final class SupabaseService: ObservableObject {
         req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["type": "email", "email": email, "token": code])
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await Self.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let access = obj["access_token"] as? String else {
@@ -144,7 +144,7 @@ final class SupabaseService: ObservableObject {
         var req = URLRequest(url: url)
         req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await Self.session.data(for: req)
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = obj["id"] as? String else { return nil }
         return (id, obj["email"] as? String)
@@ -456,9 +456,27 @@ final class SupabaseService: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "cx.sbEmail")
     }
 
-    /// Exchange the refresh token for a fresh access token. Returns false if
-    /// there's no refresh token or it's no longer valid.
+    // Coalesce concurrent refreshes. Supabase rotates the refresh token on every
+    // use, so two parallel 401s each refreshing would invalidate each other's
+    // token and force a spurious sign-out. All callers share one in-flight
+    // refresh Task instead. (Both properties are only ever touched on the main
+    // actor, so no locking is needed.)
+    private var adminRefreshTask: Task<Bool, Never>?
+    private var playerRefreshTask: Task<Bool, Never>?
+
+    /// Exchange the admin refresh token for a fresh access token, coalescing
+    /// concurrent callers onto a single refresh. Returns false if there's no
+    /// refresh token or it's no longer valid.
     private func refreshSession() async -> Bool {
+        if let inFlight = adminRefreshTask { return await inFlight.value }
+        let task = Task { await self.performAdminRefresh() }
+        adminRefreshTask = task
+        let ok = await task.value
+        adminRefreshTask = nil
+        return ok
+    }
+
+    private func performAdminRefresh() async -> Bool {
         guard isConfigured, let rt = refreshToken,
               let body = try? JSONSerialization.data(withJSONObject: ["refresh_token": rt]),
               let (data, _) = try? await send(method: "POST",
@@ -472,8 +490,18 @@ final class SupabaseService: ObservableObject {
     }
 
     /// Exchange the player's refresh token for a fresh access token (player access
-    /// tokens expire ~hourly). Returns false if there's no valid refresh token.
+    /// tokens expire ~hourly), coalescing concurrent callers onto a single
+    /// refresh. Returns false if there's no valid refresh token.
     private func refreshPlayerSession() async -> Bool {
+        if let inFlight = playerRefreshTask { return await inFlight.value }
+        let task = Task { await self.performPlayerRefresh() }
+        playerRefreshTask = task
+        let ok = await task.value
+        playerRefreshTask = nil
+        return ok
+    }
+
+    private func performPlayerRefresh() async -> Bool {
         guard isConfigured, let rt = Keychain.get(K.userRefresh),
               let body = try? JSONSerialization.data(withJSONObject: ["refresh_token": rt]),
               let (data, _) = try? await send(method: "POST",
@@ -777,6 +805,21 @@ final class SupabaseService: ObservableObject {
     }
 
     // MARK: - HTTP core
+
+    /// A private URLSession that never persists responses, cookies, or
+    /// credentials to disk. This keeps bearer tokens and answer-bearing case
+    /// payloads out of the on-disk URL cache, and enforces a TLS 1.2 floor
+    /// (ATS already requires this; we state it explicitly so it can't regress).
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral   // in-memory only: no disk cache/cookies/creds
+        cfg.urlCache = nil
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.httpCookieStorage = nil
+        cfg.httpShouldSetCookies = false
+        cfg.tlsMinimumSupportedProtocolVersion = .TLSv12
+        return URLSession(configuration: cfg)
+    }()
+
     @discardableResult
     private func send(method: String, path: String, body: Data? = nil,
                       admin: Bool = false, player: Bool = false,
@@ -796,7 +839,7 @@ final class SupabaseService: ObservableObject {
         req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         for (k, v) in extraHeaders { req.setValue(v, forHTTPHeaderField: k) }
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await Self.session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw SBError.badJSON }
 
         // Access token expired? Refresh once and retry; if that fails, force re-login.
