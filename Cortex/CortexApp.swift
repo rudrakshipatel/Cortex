@@ -105,11 +105,11 @@ struct RootView: View {
 
     @ViewBuilder private var mainContent: some View {
         if !sb.isSignedIn && !app.onboarded {
-            OnboardingFlow(startAt: .intro)           // first run: sign-in is optional (can skip)
+            OnboardingFlow(startAt: .welcome)         // first run: sign-in is optional (can skip)
         } else if app.isSyncing {
             SyncingScreen()                           // loading this account's cloud profile
         } else if !app.onboarded {
-            OnboardingFlow(startAt: .country)         // new account finishes onboarding
+            OnboardingFlow(startAt: .profession)      // new account finishes onboarding (auth already done)
         } else {
             MainTabView()
         }
@@ -139,8 +139,8 @@ struct DebugRouter: View {
         switch key {
         case "auth":          OnboardingFlow(startAt: .auth)
         case "country":       OnboardingFlow(startAt: .country)
-        case "reminder":      OnboardingFlow(startAt: .reminder)
-        case "intro":         OnboardingFlow(startAt: .intro)
+        case "reminder":      OnboardingFlow(startAt: .commitment)
+        case "intro":         OnboardingFlow(startAt: .welcome)
         case "case_info":     CaseFlow(clinicalCase: Seed.rlsCase)
         case "case_tests":    CaseFlow(clinicalCase: Seed.rlsCase, initialStep: .tests)
         case "case_results":  CaseFlow(clinicalCase: Seed.rlsCase, initialStep: .results)
