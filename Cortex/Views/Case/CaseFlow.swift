@@ -179,9 +179,14 @@ struct CaseFlow: View {
         awarded = true
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
-        if consumesLife { app.spendEnergy(app.randomCaseCost) }   // 50 for free, 0 for Pro
-        // A case counts as "solved" only if the attempt scored ≥ 25 XP;
-        // below that it stays unsolved and can be replayed.
+        if consumesLife { app.spendEnergy(app.randomCaseCost) }   // 16.5 for free, 8.5 for Pro
+        // Record the completion (score + time) for Practice ordering and the
+        // review rotation — a score below the review threshold surfaces the case
+        // again after a cooldown. Only for practice/random cases (energy-costing);
+        // daily/emergency track their own state. Scoring below is unchanged.
+        if consumesLife { app.recordCompletion(clinicalCase.id, xp: session.earnedXP) }
+        // A case counts as "solved" only if the attempt scored ≥ 25 XP (drives
+        // trophies & specialty mastery — unchanged).
         if session.solved {
             app.recordCaseSolved(clinicalCase.id, earned: session.earnedXP, outOf: CaseSession.maxXP)
             app.markCaseSolved(clinicalCase.id, specialty: clinicalCase.specialty)   // also counts toward specialty mastery
@@ -191,6 +196,13 @@ struct CaseFlow: View {
         }
         app.recordCaseFinished()         // counts toward league qualification
         app.registerDailyActivity()      // advance / reset the day streak
+        Analytics.capture("case_completed", [
+            "specialty": clinicalCase.specialty,
+            "xp": session.earnedXP,
+            "solved": session.solved,
+            "needs_review": session.earnedXP < AppState.reviewThresholdXP,
+            "is_pro": app.isPro,
+        ])
         onFinish?(session.solved)
     }
 
@@ -289,19 +301,64 @@ private struct InfoStep: View {
                             )
                     }
                     VStack(alignment: .leading, spacing: 12) {
-                        ForEach(c.bullets, id: \.self) { b in
-                            HStack(alignment: .top, spacing: 10) {
-                                Circle().fill(CX.navy).frame(width: 7, height: 7).padding(.top, 7)
-                                Text(b).font(CX.body(16)).foregroundStyle(CX.navy)
-                                    .fixedSize(horizontal: false, vertical: true)
+                        ForEach(c.bullets, id: \.self) { b in bulletRow(b) }
+                        // System-grouped findings: system as a point, findings as sub-points.
+                        ForEach(c.groups ?? [], id: \.system) { g in
+                            VStack(alignment: .leading, spacing: 8) {
+                                bulletRow(g.system, bold: true)
+                                ForEach(g.findings, id: \.self) { f in
+                                    subBulletRow(f)
+                                }
                             }
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            MentorInsight(session: session, text: c.mentor)
+            // Mentor insight only on the History and Physical Examination pages.
+            if Self.showsMentor(c) {
+                MentorInsight(session: session, text: c.mentor)
+            }
         }
         .padding(.horizontal, 18)
+    }
+
+    /// Mentor insight is offered only on the History and Physical Examination
+    /// sections (and only when that section actually has a hint).
+    static func showsMentor(_ c: InfoCard) -> Bool {
+        let t = c.title.lowercased()
+        let historyOrExam = t.contains("history") || t.contains("hx") || t.contains("exam")
+        return historyOrExam && !c.mentor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// A point's text — a leading "Label: …" renders with the label emphasised
+    /// (e.g. "Character: Pain is strictly unilateral…"), otherwise plain.
+    private func bulletText(_ text: String, bold: Bool = false) -> Text {
+        if bold { return Text(text).font(CX.heading(16)) }
+        if let p = text.labelledParts {
+            // Body text is already semibold, so the label needs the heavier
+            // weight to read as bold against it.
+            return Text(p.label + ": ").font(CX.title(16)) + Text(p.rest).font(CX.body(16))
+        }
+        return Text(text).font(CX.body(16))
+    }
+
+    /// A top-level bulleted point.
+    private func bulletRow(_ text: String, bold: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle().fill(CX.navy).frame(width: 7, height: 7).padding(.top, 7)
+            bulletText(text, bold: bold).foregroundStyle(CX.navy)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// An indented sub-point (a finding under a system heading).
+    private func subBulletRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle().fill(CX.teal).frame(width: 6, height: 6).padding(.top, 7)
+            bulletText(text).foregroundStyle(CX.navy)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 18)
     }
 
     private func patientStat(_ icon: String, _ label: String, _ value: String) -> some View {
@@ -335,7 +392,6 @@ private struct TestsStep: View {
         VStack(spacing: 12) {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
-                    MentorInsight(session: session, text: "Start with quick, high-yield tests — and skip the ones that won't change your plan.")
                     tray
                     ForEach(grouped, id: \.category) { group in
                         VStack(alignment: .leading, spacing: 10) {
@@ -449,6 +505,26 @@ private struct ResultsStep: View {
     @State private var page = 0
     // Only the investigations the user actually ordered — no auto-fill.
     var ordered: [TestOption] { session.tray }
+
+    /// The attached result image. A failed load silently falls back to the
+    /// text-only card rather than showing a broken placeholder.
+    @ViewBuilder private func resultImage(_ url: URL) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(CX.hairline, lineWidth: 1))
+            case .empty:
+                ProgressView().tint(CX.teal).frame(height: 80)
+            default:
+                EmptyView()
+            }
+        }
+        .padding(.horizontal, 8)
+    }
     var body: some View {
         VStack(spacing: 14) {
             HStack {
@@ -480,8 +556,12 @@ private struct ResultsStep: View {
                                 Text(ordered[i].name).font(CX.heading(18)).foregroundStyle(CX.teal)
                                 Text(ordered[i].result).font(CX.title(24)).foregroundStyle(CX.navy)
                                     .multilineTextAlignment(.center)
+                                // Optional result image (ECG strip, X-ray, …).
+                                // Absent → the card stays text-only as before.
+                                if let link = ordered[i].imageURL, let url = URL(string: link) {
+                                    resultImage(url)
+                                }
                                 Spacer()
-                                MentorInsight(session: session, text: ordered[i].mentor)
                             }.frame(maxWidth: .infinity, minHeight: 320)
                         }.padding(.horizontal, 20).tag(i)
                     }
@@ -511,7 +591,6 @@ private struct DiagnosisStep: View {
         VStack(spacing: 14) {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 14) {
-                    MentorInsight(session: session, text: "Weigh every clue together — which single diagnosis explains all of them?")
                     HStack {
                         Image(systemName: "lightbulb.fill").foregroundStyle(CX.gold)
                         Text("1 correct option").font(CX.body(15)).foregroundStyle(CX.navySoft)
@@ -568,7 +647,10 @@ private struct TreatmentStep: View {
         VStack(spacing: 12) {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 14) {
-                    MentorInsight(session: session, text: "Treat the cause first, then support the patient — avoid interventions that add no value.")
+                    // Step prompt — same treatment as the diagnosis question.
+                    Text("Treatment plan (Immediate + long term)")
+                        .font(CX.heading(18)).foregroundStyle(CX.navy)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     VStack(spacing: 8) {
                         Text("TREATMENT TRAY").font(CX.label(13)).foregroundStyle(CX.orange)
                         if session.treatmentTray.isEmpty {
@@ -653,6 +735,13 @@ private struct OutcomeStep: View {
         return out
     }
 
+    /// The tappable link "Challenge Friends" shares — opens this exact case in
+    /// Cortex (or the store to install it). Falls back to a plain download link
+    /// for cases that aren't on the server.
+    private var challengeURL: URL {
+        CXDeepLink.caseURL(session.clinicalCase) ?? CXDeepLink.appDownloadURL
+    }
+    /// The message that rides along with the link in the share sheet.
     private var challengeText: String {
         let c = session.clinicalCase
         return "I just \(correct ? "solved" : "tackled") a clinical case on Cortex — “\(c.displayTitle)” (\(c.specialty)). Same patient, same clues, same pressure. Think you can beat my score? 🦊🩺"
@@ -810,7 +899,8 @@ private struct OutcomeStep: View {
                 }
 
                 // Share + continue
-                ShareLink(item: challengeText) {
+                ShareLink(item: challengeURL, subject: Text("Cortex challenge"),
+                          message: Text(challengeText)) {
                     Text("Challenge Friends").font(CX.heading(16)).foregroundStyle(CX.orange)
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -912,8 +1002,15 @@ private struct CollapsibleInsight: View {
                     }
                 }
                 if open {
-                    Text(text).font(CX.body(15)).foregroundStyle(CX.navySoft)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(text.bulletPoints.enumerated()), id: \.offset) { _, point in
+                            HStack(alignment: .top, spacing: 8) {
+                                Circle().fill(color).frame(width: 6, height: 6).padding(.top, 7)
+                                Text(point).font(CX.body(15)).foregroundStyle(CX.navySoft)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -958,15 +1055,23 @@ private struct CaseReviewCard: View {
         }
     }
 
-    // Tests: good = ordered & helpful; bad = ordered & not helpful.
+    // Every option is sorted into three buckets: correctly selected (helpful &
+    // ordered), missed (helpful but not ordered), and incorrectly selected
+    // (ordered but not helpful). Selection/scoring is unchanged — this only
+    // reads `session.tray` against the case's full `c.tests` pool.
     private var testsReview: some View {
-        let good = session.tray.filter(\.helpful)
-        let bad  = session.tray.filter { !$0.helpful }
+        let buckets = Self.classify(selected: session.tray, all: c.tests,
+                                    isCorrect: \.helpful, id: \.id, name: \.name)
         return VStack(alignment: .leading, spacing: 14) {
-            reviewGroup(good: true, "Efficient Test Choices", good.map(\.name),
-                        empty: "No high-yield tests ordered.")
-            if !bad.isEmpty {
-                reviewGroup(good: false, "Low-Yield Tests", bad.map(\.name), empty: "")
+            reviewGroup(.correct, "Correctly Selected", buckets.correct,
+                        empty: "No recommended investigations ordered.")
+            if !buckets.missed.isEmpty {
+                reviewGroup(.missed, "Missed Investigations", buckets.missed,
+                            message: "You did not select these recommended investigations.")
+            }
+            if !buckets.incorrect.isEmpty {
+                reviewGroup(.incorrect, "Incorrectly Selected", buckets.incorrect,
+                            message: "These investigations were unnecessary or incorrect for this case.")
             }
         }
     }
@@ -975,37 +1080,80 @@ private struct CaseReviewCard: View {
         let correct = c.diagnoses.first(where: \.correct)?.name ?? "—"
         let picked = session.pickedDiagnosis?.name ?? "No answer"
         return VStack(alignment: .leading, spacing: 14) {
-            reviewGroup(good: session.diagnosisCorrect,
+            reviewGroup(session.diagnosisCorrect ? .correct : .incorrect,
                         session.diagnosisCorrect ? "Correct Diagnosis" : "Your Diagnosis",
-                        [picked], empty: "")
+                        [picked])
             if !session.diagnosisCorrect {
-                reviewGroup(good: true, "Correct Answer", [correct], empty: "")
+                reviewGroup(.correct, "Correct Answer", [correct])
             }
         }
     }
 
     private var treatmentReview: some View {
-        let good = session.treatmentTray.filter(\.appropriate)
-        let bad  = session.treatmentTray.filter { !$0.appropriate }
+        let buckets = Self.classify(selected: session.treatmentTray, all: c.treatments,
+                                    isCorrect: \.appropriate, id: \.id, name: \.name)
         return VStack(alignment: .leading, spacing: 14) {
-            reviewGroup(good: true, "Appropriate Treatments", good.map(\.name),
-                        empty: "No appropriate treatments selected.")
-            if !bad.isEmpty {
-                reviewGroup(good: false, "Inappropriate Treatments", bad.map(\.name), empty: "")
+            reviewGroup(.correct, "Correctly Selected", buckets.correct,
+                        empty: "No recommended treatments selected.")
+            if !buckets.missed.isEmpty {
+                reviewGroup(.missed, "Missed Treatments", buckets.missed,
+                            message: "You did not select these recommended treatments.")
+            }
+            if !buckets.incorrect.isEmpty {
+                reviewGroup(.incorrect, "Incorrectly Selected", buckets.incorrect,
+                            message: "These treatments were unnecessary or incorrect for this case.")
             }
         }
     }
 
-    private func reviewGroup(good: Bool, _ title: String, _ items: [String], empty: String) -> some View {
+    /// Sort a multi-select answer into the three feedback buckets (as display
+    /// names). Generic over tests and treatments — `isCorrect` is the option's
+    /// correctness flag (`helpful` / `appropriate`). Works for any number of
+    /// correct options. Missed = correct options in `all` the user didn't pick.
+    static func classify<Option>(
+        selected: [Option], all: [Option],
+        isCorrect: (Option) -> Bool, id: (Option) -> UUID, name: (Option) -> String
+    ) -> (correct: [String], missed: [String], incorrect: [String]) {
+        let selectedIDs = Set(selected.map(id))
+        let correct = selected.filter(isCorrect).map(name)
+        let incorrect = selected.filter { !isCorrect($0) }.map(name)
+        let missed = all.filter { isCorrect($0) && !selectedIDs.contains(id($0)) }.map(name)
+        return (correct, missed, incorrect)
+    }
+
+    /// Visual style for each feedback bucket.
+    private enum ReviewKind {
+        case correct, missed, incorrect
+        var color: Color {
+            switch self {
+            case .correct:   return CX.teal
+            case .missed:    return CX.orange
+            case .incorrect: return .red
+            }
+        }
+        var icon: String {
+            switch self {
+            case .correct:   return "checkmark.circle.fill"
+            case .missed:    return "exclamationmark.circle.fill"
+            case .incorrect: return "xmark.circle.fill"
+            }
+        }
+    }
+
+    private func reviewGroup(_ kind: ReviewKind, _ title: String, _ items: [String],
+                             message: String? = nil, empty: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: good ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(good ? CX.teal : .red)
-                Text(title).font(CX.heading(16)).foregroundStyle(good ? CX.teal : .red)
+                Image(systemName: kind.icon).foregroundStyle(kind.color)
+                Text(title).font(CX.heading(16)).foregroundStyle(kind.color)
             }
             if items.isEmpty {
-                Text(empty).font(CX.body(14)).foregroundStyle(CX.navySoft)
+                if let empty { Text(empty).font(CX.body(14)).foregroundStyle(CX.navySoft) }
             } else {
+                if let message {
+                    Text(message).font(CX.body(13)).foregroundStyle(CX.navySoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(items, id: \.self) { item in
                     HStack(alignment: .top, spacing: 8) {
                         Circle().fill(CX.navy).frame(width: 6, height: 6).padding(.top, 7)

@@ -3,19 +3,25 @@
 // function calls OpenAI (ChatGPT) or Google Gemini with the server-side key and
 // returns the assistant's reply. Keys NEVER ship in the app.
 //
+// Capped at DAILY_AI_LIMIT questions per signed-in user per UTC day (see
+// ai_daily_limit.sql for the increment_ai_usage RPC this calls) — checked
+// BEFORE the paid provider call, so an over-limit request never costs money.
+//
 // Required secrets (set with `supabase secrets set`):
 //   OPENAI_API_KEY  – your OpenAI key (sk-...)          [needed for provider "openai"]
 //   GEMINI_API_KEY  – your Google AI Studio key         [needed for provider "gemini"]
 // Optional overrides:
 //   OPENAI_MODEL    – default "gpt-4o-mini"
 //   GEMINI_MODEL    – default "gemini-2.0-flash"
-// (SUPABASE_URL and SUPABASE_ANON_KEY are injected automatically.)
+// (SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected
+// automatically — no extra secrets needed.)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.0-flash";
 const MAX_TOKENS = 800;
+const DAILY_AI_LIMIT = 25;
 
 interface ChatMessage { role: "user" | "assistant"; content: string }
 
@@ -104,7 +110,24 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_ANON_KEY")!,
   );
   const { data: userData } = await supabase.auth.getUser(token);
-  if (!userData?.user) return json({ error: "Please sign in to use the AI tutor." }, 401);
+  const uid = userData?.user?.id;
+  if (!uid) return json({ error: "Please sign in to use the AI tutor." }, 401);
+
+  // Bump today's usage count first (service-role, bypasses RLS) — if that
+  // pushes them over the daily cap, stop before spending anything on a
+  // provider call.
+  const admin = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  const { data: usedToday, error: usageErr } = await admin.rpc("increment_ai_usage", { p_uid: uid });
+  if (usageErr) {
+    console.error("increment_ai_usage failed", usageErr);
+    return json({ error: "Couldn't reach the AI tutor. Please try again." }, 500);
+  }
+  if ((usedToday ?? 0) > DAILY_AI_LIMIT) {
+    return json({ error: `You've reached today's limit of ${DAILY_AI_LIMIT} AI questions. It resets at midnight UTC.` }, 429);
+  }
 
   let payload: { provider?: string; caseContext?: string; messages?: ChatMessage[] };
   try {

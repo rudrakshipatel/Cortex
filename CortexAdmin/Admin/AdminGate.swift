@@ -12,12 +12,28 @@ import Security
 enum AdminAccess {
     private static let saltKey = "cx.adminPINSalt"        // Keychain
     private static let hashKey = "cx.adminPINHash"        // Keychain
-    private static let failKey = "cx.adminPINFails"       // UserDefaults (not secret)
-    private static let lockKey = "cx.adminPINLockUntil"   // UserDefaults (not secret)
+    private static let lenKey  = "cx.adminPINLen"         // Keychain (PIN digit count)
+    private static let failKey = "cx.adminPINFails"       // Keychain (brute-force counter)
+    private static let lockKey = "cx.adminPINLockUntil"   // Keychain (lockout deadline)
     private static let maxAttempts = 5
     private static let iterations = 150_000
 
+    /// New PINs are 6 digits. Installs created before this shipped a 4-digit PIN
+    /// (their length isn't tracked → treated as 4); those are upgraded in place
+    /// after the admin proves knowledge of the existing PIN.
+    static let newPINLength = 6
+
     static var isConfigured: Bool { Keychain.get(hashKey) != nil }
+
+    /// Digit count of the stored PIN: the tracked length if present, else 4 for a
+    /// legacy PIN (hash exists but length was never recorded), else the new length.
+    static var storedPINLength: Int {
+        if let s = Keychain.get(lenKey), let n = Int(s) { return n }
+        return isConfigured ? 4 : newPINLength
+    }
+
+    /// True when a legacy, shorter PIN should be upgraded to `newPINLength`.
+    static var needsUpgrade: Bool { isConfigured && storedPINLength < newPINLength }
 
     // MARK: PBKDF2
 
@@ -54,6 +70,7 @@ enum AdminAccess {
         let salt = randomSalt()
         Keychain.set(salt.base64EncodedString(), for: saltKey)
         Keychain.set(derive(pin, salt: salt), for: hashKey)
+        Keychain.set(String(pin.count), for: lenKey)
         UserDefaults.standard.removeObject(forKey: "cx.adminPINHash_legacy")
         resetFailures()
     }
@@ -68,33 +85,36 @@ enum AdminAccess {
 
     static var isLockedOut: Bool { lockoutRemaining > 0 }
 
-    /// Seconds remaining on the current lockout (0 if not locked).
+    /// Seconds remaining on the current lockout (0 if not locked). The deadline
+    /// lives in the Keychain so it can't be wiped by editing the app's plist to
+    /// defeat the brute-force lockout.
     static var lockoutRemaining: Int {
-        let until = UserDefaults.standard.double(forKey: lockKey)
+        let until = Double(Keychain.get(lockKey) ?? "") ?? 0
         return max(0, Int(until.rounded() - Date().timeIntervalSince1970))
     }
 
     static var attemptsRemaining: Int {
-        max(0, maxAttempts - UserDefaults.standard.integer(forKey: failKey))
+        max(0, maxAttempts - (Int(Keychain.get(failKey) ?? "") ?? 0))
     }
 
     /// Record a wrong PIN. Once `maxAttempts` is hit, lock for an escalating
     /// window (30s, then doubling, capped at 1 hour).
     static func registerFailure() {
-        let d = UserDefaults.standard
-        let fails = d.integer(forKey: failKey) + 1
-        d.set(fails, forKey: failKey)
+        let fails = (Int(Keychain.get(failKey) ?? "") ?? 0) + 1
+        Keychain.set(String(fails), for: failKey)
         if fails >= maxAttempts {
             let over = Double(fails - maxAttempts)
             let delay = min(30.0 * pow(2.0, over), 3600)
-            d.set(Date().timeIntervalSince1970 + delay, forKey: lockKey)
+            Keychain.set(String(Date().timeIntervalSince1970 + delay), for: lockKey)
         }
     }
 
     static func resetFailures() {
-        let d = UserDefaults.standard
-        d.removeObject(forKey: failKey)
-        d.removeObject(forKey: lockKey)
+        Keychain.delete(failKey)
+        Keychain.delete(lockKey)
+        // Scrub any counter left in UserDefaults by a pre-Keychain build.
+        UserDefaults.standard.removeObject(forKey: failKey)
+        UserDefaults.standard.removeObject(forKey: lockKey)
     }
 }
 
@@ -124,12 +144,17 @@ private struct AdminGate: View {
     @State private var firstEntry = ""        // for create-confirm
     @State private var error: String?
     @State private var shake = 0
+    @State private var upgrading = false       // mid legacy-PIN → 6-digit upgrade
     @State private var lockRemaining = AdminAccess.lockoutRemaining
 
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     enum Stage { case create, confirm, enter }
-    private let pinLength = 4
+    /// Enter uses the stored PIN's length (4 for a legacy PIN); create/confirm
+    /// always use the new length, so an upgrade sets a full-length PIN.
+    private var pinLength: Int {
+        stage == .enter ? AdminAccess.storedPINLength : AdminAccess.newPINLength
+    }
 
     var body: some View {
         AppBackground {
@@ -169,14 +194,17 @@ private struct AdminGate: View {
 
     private var title: String {
         switch stage {
-        case .create:  return "Create Admin PIN"
+        case .create:  return upgrading ? "Update Admin PIN" : "Create Admin PIN"
         case .confirm: return "Confirm Admin PIN"
         case .enter:   return "Admin Access"
         }
     }
     private var subtitle: String {
         switch stage {
-        case .create:  return "Set a \(pinLength)-digit PIN. Only you will use this to upload content."
+        case .create:
+            return upgrading
+                ? "For added security your PIN is now \(AdminAccess.newPINLength) digits. Set a new one."
+                : "Set a \(AdminAccess.newPINLength)-digit PIN. Only you will use this to upload content."
         case .confirm: return "Re-enter your PIN to confirm."
         case .enter:   return "Enter your PIN to manage questions."
         }
@@ -219,7 +247,15 @@ private struct AdminGate: View {
             if AdminAccess.verify(entry) {
                 AdminAccess.resetFailures()
                 lockRemaining = 0
-                onUnlock()
+                if AdminAccess.needsUpgrade {
+                    // Old PIN proven — require a new, longer PIN before unlocking.
+                    upgrading = true
+                    firstEntry = ""
+                    entry = ""
+                    stage = .create
+                } else {
+                    onUnlock()
+                }
             } else {
                 AdminAccess.registerFailure()
                 lockRemaining = AdminAccess.lockoutRemaining

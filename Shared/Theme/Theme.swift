@@ -38,6 +38,11 @@ enum CX {
         LinearGradient(colors: [teal, tealDark],
                        startPoint: .top, endPoint: .bottom)
     }
+    /// Marks an active Pro subscriber (the "PRO" badge in the top bar).
+    static var goldButton: LinearGradient {
+        LinearGradient(colors: [gold, Color(hex: 0xD9971A)],
+                       startPoint: .top, endPoint: .bottom)
+    }
     static var navyBar: LinearGradient {
         LinearGradient(colors: [Color(hex: 0x1B3357), Color(hex: 0x10203A)],
                        startPoint: .top, endPoint: .bottom)

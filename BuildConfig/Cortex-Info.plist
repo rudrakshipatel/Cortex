@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Export compliance: the app uses only exempt cryptography (HTTPS/ATS and
+	     PBKDF2 via Apple's CommonCrypto), so no export docs are required. Setting
+	     this avoids the repeated prompt on every TestFlight/App Store upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- App Transport Security: make the secure default explicit so no future
+	     edit can silently re-enable cleartext HTTP. All endpoints (Supabase,
+	     Google Sheets, PostHog, RevenueCat) support TLS 1.2+. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+	<!-- Keep the app's Documents container private: never expose it through the
+	     Files app / iTunes file sharing, and don't open external documents in
+	     place. The local content cache lives here, so this stays sealed. -->
+	<key>UIFileSharingEnabled</key>
+	<false/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.docriddles.cortex.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cortex</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

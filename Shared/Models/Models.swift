@@ -22,8 +22,10 @@ final class AppState: ObservableObject {
     /// Coins are the spendable currency — earned by solving cases, spent to
     /// unlock Mentor Insight.
     @Published var coins: Int       { didSet { defaults.set(coins, forKey: K.coins) } }
-    /// Life is energy spent to play cases; it refills to `maxLife` at GMT 00:00.
-    @Published var life: Int        { didSet { defaults.set(life, forKey: K.life) } }
+    /// Life is energy spent to play cases; it refills to `maxLife` over time.
+    /// Fractional so Pro's 8.5-energy cases can be represented exactly (the
+    /// on-screen bar shows it rounded).
+    @Published var life: Double     { didSet { defaults.set(life, forKey: K.life) } }
     @Published var isPro: Bool = false
     /// Username shown on the profile and the global leaderboard.
     @Published var displayName: String { didSet { defaults.set(displayName, forKey: K.name) } }
@@ -31,12 +33,16 @@ final class AppState: ObservableObject {
     /// Stable anonymous identity for the global leaderboard (generated once).
     let playerId: String
 
-    /// Full Life bar — restored every GMT day.
-    static let maxLife = 100
+    /// Full Life bar — regenerates over time.
+    static let maxLife: Double = 100
 
     /// Country chosen during onboarding (persisted). Emergency timing uses the
     /// device's own timezone, which is more precise than country.
     @Published var country: String { didSet { defaults.set(country, forKey: K.country) } }
+    /// Current medical position chosen during onboarding (a `MedicalPosition`
+    /// raw value; stored as a string for the same forward-compat reasons as
+    /// `country`/`displayName`).
+    @Published var position: String { didSet { defaults.set(position, forKey: K.position) } }
 
     // MARK: Streak (GMT-day based, persisted)
     @Published private(set) var streak: Int            { didSet { defaults.set(streak, forKey: K.streak) } }
@@ -50,6 +56,15 @@ final class AppState: ObservableObject {
     /// A pending "setback" (lost streak / league demotion) to commiserate with
     /// the player. Transient — surfaced once as a sheet, then cleared. Not saved.
     @Published var pendingSetback: SetbackInfo? = nil
+    /// A case id from a tapped "Challenge a friend" deep link, waiting to be
+    /// opened once content is available. Transient — cleared once handled.
+    @Published var pendingCaseLink: String? = nil
+    /// An invite code from a tapped invite link, held until the user has an
+    /// account to attribute it to (they may sign up later). Persisted so it
+    /// survives the trip through onboarding; cleared once redeemed.
+    @Published var pendingInviteCode: String? {
+        didSet { defaults.set(pendingInviteCode, forKey: K.pendingInvite) }
+    }
     /// The GMT day Life was last refilled — drives the daily reset.
     @Published private(set) var lastLifeDay: Int { didSet { defaults.set(lastLifeDay, forKey: K.lifeDay) } }
     /// Timestamp from which energy has been regenerating (whole units only; the
@@ -63,6 +78,20 @@ final class AppState: ObservableObject {
     /// IDs of clinical/practice cases solved correctly — excluded from "random".
     @Published private(set) var solvedCaseIDs: Set<String> {
         didSet { defaults.set(Array(solvedCaseIDs), forKey: K.solvedCases) }
+    }
+    /// Per-case completion record (any score), keyed by case id → epoch time of
+    /// the most recent completion. Drives the Practice ordering and the review
+    /// rotation (a case scored below `reviewThresholdXP` is held out of the
+    /// random pool for `reviewCooldownDays`, then becomes "due for review").
+    @Published private(set) var caseCompletedAt: [String: Double] {
+        didSet { defaults.set(caseCompletedAt, forKey: K.caseCompletedAt) }
+    }
+    /// The XP earned on each case's most recent completion (companion to
+    /// `caseCompletedAt`). A value below `reviewThresholdXP` marks the case as
+    /// needing review. Scoring itself is unchanged — this is a display/rotation
+    /// hint recorded alongside the real score.
+    @Published private(set) var caseXP: [String: Int] {
+        didSet { defaults.set(caseXP, forKey: K.caseXP) }
     }
     /// Count of distinct cases solved per specialty — drives mastery trophies.
     @Published private(set) var specialtySolved: [String: Int] {
@@ -111,6 +140,10 @@ final class AppState: ObservableObject {
         static let freezes = "cx.streakFreezes", activeDays = "cx.activeDays", highStreak = "cx.highStreak"
         static let leagueTier = "cx.leagueTier", leagueResultWeek = "cx.leagueResultWeek"
         static let specialtySolved = "cx.specialtySolved"
+        static let position = "cx.position"
+        static let caseCompletedAt = "cx.caseCompletedAt"
+        static let caseXP = "cx.caseXP"
+        static let pendingInvite = "cx.pendingInviteCode"
     }
 
     init() {
@@ -125,7 +158,9 @@ final class AppState: ObservableObject {
         }
         lifetimeXP = d.object(forKey: K.xp)    as? Int ?? 0   // new users start at Level 1
         coins      = d.object(forKey: K.coins) as? Int ?? 500   // new users start with 500 free coins
-        life       = d.object(forKey: K.life)  as? Int ?? Self.maxLife
+        // Read as Double; an existing install's Int value reads back fine
+        // (UserDefaults numbers are NSNumber). Absent → full bar.
+        life       = d.object(forKey: K.life) != nil ? d.double(forKey: K.life) : Self.maxLife
         lastLifeDay = d.object(forKey: K.lifeDay) as? Int ?? Self.gmtDay()
         let storedEnergyTS = d.double(forKey: K.energyDate)   // 0 when unset
         lastEnergyDate = storedEnergyTS > 0 ? Date(timeIntervalSince1970: storedEnergyTS) : Date()
@@ -140,6 +175,9 @@ final class AppState: ObservableObject {
         activeDays = Set(d.array(forKey: K.activeDays) as? [Int] ?? [])
         solvedDailyDays = Set(d.array(forKey: K.solvedDaily) as? [Int] ?? [])
         solvedCaseIDs = Set(d.stringArray(forKey: K.solvedCases) ?? [])
+        caseCompletedAt = d.dictionary(forKey: K.caseCompletedAt) as? [String: Double] ?? [:]
+        caseXP = d.dictionary(forKey: K.caseXP) as? [String: Int] ?? [:]
+        pendingInviteCode = d.string(forKey: K.pendingInvite)
         specialtySolved = d.dictionary(forKey: K.specialtySolved) as? [String: Int] ?? [:]
         caseTrophies = d.dictionary(forKey: K.caseTrophies) as? [String: Int] ?? [:]
         if let storedName = d.string(forKey: K.name), storedName != "Dr. Vix" {
@@ -162,6 +200,7 @@ final class AppState: ObservableObject {
         bronze = d.object(forKey: K.bronze) as? Int ?? 0
         topThreeFinishes = d.object(forKey: K.topThree) as? Int ?? 0
         country = d.string(forKey: K.country) ?? ""
+        position = d.string(forKey: K.position) ?? ""
         leagueTier = d.object(forKey: K.leagueTier) as? Int ?? 0          // start in Bronze
         lastLeagueResultWeek = d.object(forKey: K.leagueResultWeek) as? Int ?? Self.gmtWeek()
         refreshForNewDay()
@@ -184,10 +223,12 @@ final class AppState: ObservableObject {
     /// profile can never make the onboarding flow reappear.
     struct ProfileState: Codable {
         var lifetimeXP = 0, coins = 500, life = AppState.maxLife
-        var displayName = "Dr. Vix", country = ""
+        var displayName = "Dr. Vix", country = "", position = ""
         var streak = 0, lastActiveEpochDay = 0, highestStreak = 0, streakFreezes = 0
         var activeDays: [Int] = [], lastLifeDay = 0, lastEnergyTS = 0.0
         var solvedDailyDays: [Int] = [], solvedCaseIDs: [String] = []
+        var caseCompletedAt: [String: Double] = [:]
+        var caseXP: [String: Int] = [:]
         var caseTrophies: [String: Int] = [:]
         var specialtySolved: [String: Int] = [:]
         var casesSolved = 0, casesFinished = 0, weeklyXP = 0, leagueCasesThisWeek = 0
@@ -198,11 +239,12 @@ final class AppState: ObservableObject {
     func exportProfile() -> ProfileState {
         ProfileState(
             lifetimeXP: lifetimeXP, coins: coins, life: life,
-            displayName: displayName, country: country, streak: streak,
+            displayName: displayName, country: country, position: position, streak: streak,
             lastActiveEpochDay: lastActiveEpochDay, highestStreak: highestStreak,
             streakFreezes: streakFreezes, activeDays: Array(activeDays), lastLifeDay: lastLifeDay,
             lastEnergyTS: lastEnergyDate.timeIntervalSince1970,
             solvedDailyDays: Array(solvedDailyDays), solvedCaseIDs: Array(solvedCaseIDs),
+            caseCompletedAt: caseCompletedAt, caseXP: caseXP,
             caseTrophies: caseTrophies, specialtySolved: specialtySolved,
             casesSolved: casesSolved, casesFinished: casesFinished,
             weeklyXP: weeklyXP, leagueCasesThisWeek: leagueCasesThisWeek, lastLeagueWeek: lastLeagueWeek,
@@ -213,12 +255,13 @@ final class AppState: ObservableObject {
     func applyProfile(_ p: ProfileState) {
         // `onboarded` intentionally untouched — it's a sticky local flag.
         lifetimeXP = p.lifetimeXP; coins = p.coins; life = p.life
-        displayName = p.displayName; country = p.country
+        displayName = p.displayName; country = p.country; position = p.position
         streak = p.streak; lastActiveEpochDay = p.lastActiveEpochDay
         highestStreak = p.highestStreak; streakFreezes = p.streakFreezes
         activeDays = Set(p.activeDays); lastLifeDay = p.lastLifeDay
         lastEnergyDate = p.lastEnergyTS > 0 ? Date(timeIntervalSince1970: p.lastEnergyTS) : Date()
         solvedDailyDays = Set(p.solvedDailyDays); solvedCaseIDs = Set(p.solvedCaseIDs)
+        caseCompletedAt = p.caseCompletedAt; caseXP = p.caseXP
         caseTrophies = p.caseTrophies; specialtySolved = p.specialtySolved
         casesSolved = p.casesSolved; casesFinished = p.casesFinished
         weeklyXP = p.weeklyXP; leagueCasesThisWeek = p.leagueCasesThisWeek
@@ -264,6 +307,12 @@ final class AppState: ObservableObject {
             }                                            // else: first ever → claim current local progress
             await pushProfileNow()                       // create the row
             defaults.set(true, forKey: "cx.hasBoundAccount")
+            // A brand-new account is the "friend who signed up" — attribute any
+            // invite code they arrived with (server enforces once-only/self).
+            if let code = pendingInviteCode {
+                await SupabaseService.shared.redeemReferral(code: code)
+                pendingInviteCode = nil
+            }
         case .failed:
             break   // transient failure — keep local state, don't reset or overwrite the cloud
         }
@@ -377,23 +426,18 @@ final class AppState: ObservableObject {
     /// Energy regenerated per minute — 0.0694444…/min = exactly 100 over 24 hours.
     static let energyRegenPerMinute = 100.0 / (24.0 * 60.0)
 
-    /// Grant whole energy units accrued since `lastEnergyDate`, capped at `maxLife`.
-    /// The clock advances only by the units actually granted, so the fractional
-    /// remainder carries over to the next call (no regen is lost to rounding).
+    /// Grant energy accrued since `lastEnergyDate`, capped at `maxLife`. Energy
+    /// is fractional now, so it accrues continuously (no whole-unit remainder to
+    /// carry) and the clock simply advances to now.
     func regenerateEnergy() {
-        guard life < Self.maxLife else { lastEnergyDate = Date(); return }
         let now = Date()
+        guard life < Self.maxLife else { lastEnergyDate = now; return }
         let minutes = now.timeIntervalSince(lastEnergyDate) / 60.0
         guard minutes > 0 else { return }
-        let gained = Int((minutes * Self.energyRegenPerMinute).rounded(.down))
+        let gained = minutes * Self.energyRegenPerMinute
         guard gained > 0 else { return }
         life = Swift.min(Self.maxLife, life + gained)
-        if life >= Self.maxLife {
-            lastEnergyDate = now
-        } else {
-            let secondsPerUnit = 60.0 / Self.energyRegenPerMinute
-            lastEnergyDate = lastEnergyDate.addingTimeInterval(Double(gained) * secondsPerUnit)
-        }
+        lastEnergyDate = now
     }
 
     // MARK: Daily Case
@@ -405,6 +449,83 @@ final class AppState: ObservableObject {
 
     // MARK: Solved cases (per-case, by id)
     func isCaseSolved(_ id: UUID) -> Bool { solvedCaseIDs.contains(id.uuidString) }
+
+    // MARK: Case review & progression (Practice ordering + random rotation)
+    /// Below this XP a completed case is flagged "needs review".
+    static let reviewThresholdXP = 35
+    /// Days a "needs review" case is held out of the random pool before it
+    /// becomes due to reappear.
+    static let reviewCooldownDays = 15.0
+
+    /// Record a case completion (any score) — updates its last XP and timestamp.
+    /// Called for every practice/random case finish; scoring is unchanged.
+    func recordCompletion(_ id: UUID, xp: Int) {
+        caseCompletedAt[id.uuidString] = Date().timeIntervalSince1970
+        caseXP[id.uuidString] = xp
+    }
+
+    /// Whether the case has been played to a result at least once. Also honours
+    /// `solvedCaseIDs` so cases solved before completion-tracking existed still
+    /// count as completed (they behave as done, not "needs review").
+    func isCaseCompleted(_ id: UUID) -> Bool {
+        caseCompletedAt[id.uuidString] != nil || solvedCaseIDs.contains(id.uuidString)
+    }
+    /// A completed case whose recorded score was below the review threshold.
+    /// Requires an actual XP record, so legacy solved cases (no record) are
+    /// treated as done rather than needing review.
+    func caseNeedsReview(_ id: UUID) -> Bool {
+        guard let xp = caseXP[id.uuidString] else { return false }
+        return xp < Self.reviewThresholdXP
+    }
+    /// A "needs review" case whose cooldown has elapsed — due to reappear.
+    func isReviewDue(_ id: UUID) -> Bool {
+        guard caseNeedsReview(id), let ts = caseCompletedAt[id.uuidString] else { return false }
+        return (Date().timeIntervalSince1970 - ts) / 86_400 >= Self.reviewCooldownDays
+    }
+    /// A case may appear in the random pool while it's unfinished, or once a
+    /// low-scoring completion is due for review. Fully-done cases (≥ threshold)
+    /// and cases still inside their review cooldown are held out.
+    func availableForRandom(_ id: UUID) -> Bool { !isCaseCompleted(id) || isReviewDue(id) }
+
+    /// Practice-tab display priority within a specialty: unfinished (0) first,
+    /// then cases due for review (1), then everything else completed (2).
+    func casePriority(_ id: UUID) -> Int {
+        if !isCaseCompleted(id) { return 0 }
+        if isReviewDue(id) { return 1 }
+        return 2
+    }
+
+    /// Practice-tab order: cases grouped by their specialty's first appearance,
+    /// and within each specialty ordered by `casePriority` (unfinished → due
+    /// review → other completed). Stable within a bucket, so a completed case
+    /// sinks behind its unfinished specialty-mates and the next unfinished one
+    /// becomes first.
+    func practiceOrdered(_ cases: [ClinicalCase]) -> [ClinicalCase] {
+        var specialtyRank: [String: Int] = [:]
+        for c in cases where specialtyRank[c.specialty] == nil {
+            specialtyRank[c.specialty] = specialtyRank.count
+        }
+        return cases.enumerated().sorted { a, b in
+            let sa = specialtyRank[a.element.specialty] ?? 0, sb = specialtyRank[b.element.specialty] ?? 0
+            if sa != sb { return sa < sb }
+            let pa = casePriority(a.element.id), pb = casePriority(b.element.id)
+            if pa != pb { return pa < pb }
+            return a.offset < b.offset   // stable
+        }.map(\.element)
+    }
+
+    /// The Practice tab's sections: one per specialty (in first-appearance
+    /// order), each holding that specialty's cases in `practiceOrdered` order.
+    func practiceGroups(_ cases: [ClinicalCase]) -> [(specialty: String, cases: [ClinicalCase])] {
+        var order: [String] = []
+        var grouped: [String: [ClinicalCase]] = [:]
+        for c in practiceOrdered(cases) {
+            if grouped[c.specialty] == nil { order.append(c.specialty) }
+            grouped[c.specialty, default: []].append(c)
+        }
+        return order.map { ($0, grouped[$0] ?? []) }
+    }
+
     /// Mark a case solved. The first time a given case is solved, it also counts
     /// toward that specialty's mastery trophy.
     func markCaseSolved(_ id: UUID, specialty: String = "") {
@@ -514,6 +635,19 @@ final class AppState: ObservableObject {
         return true
     }
 
+    /// Coins a free player pays to unlock Mentor Insight for a case (reveals its
+    /// History & Physical Examination hints). Pro players reveal them for free.
+    static let mentorInsightUnlockCost = 300
+
+    /// Spend `amount` coins if affordable. Returns false (and spends nothing)
+    /// when the wallet is short.
+    @discardableResult
+    func spendCoins(_ amount: Int) -> Bool {
+        guard coins >= amount else { return false }
+        coins -= amount
+        return true
+    }
+
     // MARK: Energy economy
     // Energy is spent *after* a case, scaled to how well it was solved: a perfect
     // 100-XP solve costs the least (5), a 0-XP attempt costs the most (15). The
@@ -527,16 +661,20 @@ final class AppState: ObservableObject {
         return Swift.min(maxEnergyCost, Swift.max(minEnergyCost, cost))
     }
 
-    /// Energy a random/practice case costs to play. Free players pay a flat 50
-    /// (~2 per full bar); Pro players pay only 12 (~8 per full bar).
-    static let randomCaseEnergyCost = 50
-    static let proCaseEnergyCost = 12
-    var randomCaseCost: Int { isPro ? Self.proCaseEnergyCost : Self.randomCaseEnergyCost }
+    /// Energy a random/practice/past case costs to play. Free players pay a flat
+    /// 16.5 (~6 per full bar); Pro players pay only 8.5 (~12 per full bar).
+    static let randomCaseEnergyCost: Double = 16.5
+    static let proCaseEnergyCost: Double = 8.5
+    var randomCaseCost: Double { isPro ? Self.proCaseEnergyCost : Self.randomCaseEnergyCost }
 
-    func canAfford(life cost: Int) -> Bool { life >= cost }
+    /// A short human label for an energy amount — drops a trailing ".0"
+    /// ("25", "8.5") for use in UI copy.
+    static func energyText(_ v: Double) -> String { String(format: "%g", v) }
+
+    func canAfford(life cost: Double) -> Bool { life >= cost }
     /// Spend energy after a case, never dropping below zero. Banks any pending
     /// regen first, then starts the regen clock if this drops us below full.
-    func spendEnergy(_ cost: Int) {
+    func spendEnergy(_ cost: Double) {
         regenerateEnergy()
         let wasFull = life >= Self.maxLife
         life = Swift.max(0, life - cost)
@@ -609,6 +747,16 @@ final class AppState: ObservableObject {
     var qualifiedForLeague: Bool { leagueCasesThisWeek >= Self.casesToQualify }
 }
 
+// MARK: - Medical position (chosen during onboarding)
+enum MedicalPosition: String, CaseIterable, Identifiable {
+    case medicalStudent = "Medical Student"
+    case intern = "Intern"
+    case resident = "Resident"
+    case consultant = "Consultant"
+    case other = "Other"
+    var id: String { rawValue }
+}
+
 // MARK: - Departments (home list)
 struct Department: Identifiable {
     let id = UUID()
@@ -643,20 +791,25 @@ struct ClinicalCase: Identifiable, Codable {
     let age: String
     let chiefComplaint: String
     let infoCards: [InfoCard]
-    let tests: [TestOption]
+    var tests: [TestOption]
     let diagnosisQuestion: String
-    let diagnoses: [DiagnosisOption]
-    let treatments: [TreatmentOption]
+    var diagnoses: [DiagnosisOption]
+    var treatments: [TreatmentOption]
     let outcomeTitle: String
     let outcomeBody: String
     let xpReward: Int
     /// Optional structured Mentor Insight, unlocked with coins on the answer screen.
     var mentorInsight: MentorInsightContent? = nil
+    /// Optional presenting vitals (BP, PR, RR, SpO2, Temperature). Authored in
+    /// the admin Google Sheet; displayed on the case (UI added separately).
+    var vitals: Vitals? = nil
     // Presentation fields for the rich case card (all optional with fallbacks).
     var title: String? = nil        // dramatic case title, e.g. "Collapse in the Night"
     var teaser: String? = nil       // narrative hook shown on the card
     var imageName: String? = nil    // hero image asset name (added to the app)
     var difficulty: Int? = nil      // 1 (easy) … 5 (hard)
+    var occupation: String? = nil   // patient occupation, e.g. "Retired teacher"
+    var duration: String? = nil     // duration of the presenting complaint, e.g. "5 days"
     /// If this case came from the server it arrives answer-stripped; this points
     /// back to the row so the attempt can be graded server-side (where the
     /// answers live). `nil` for built-in cases, which carry their own key.
@@ -667,6 +820,32 @@ struct ClinicalCase: Identifiable, Codable {
 struct RemoteRef: Codable, Equatable {
     var source: String   // "content" (clinical/daily) or "emergency"
     var id: String       // the table row's UUID
+}
+
+/// Presenting vital signs. Each is an optional free-text string (e.g. BP
+/// "120/80", Temp "37.1°C") so any unit/format the author uses is preserved.
+struct Vitals: Codable, Equatable {
+    var bp: String?           // blood pressure, e.g. "120/80"
+    var pr: String?           // pulse rate, e.g. "88"
+    var rr: String?           // respiratory rate, e.g. "18"
+    var spo2: String?         // oxygen saturation, e.g. "98%"
+    var temperature: String?  // e.g. "37.1°C"
+    var bmi: String?          // e.g. "31 kg/m²"
+
+    /// Whether every field is empty (so we can drop it rather than store blanks).
+    var isEmpty: Bool {
+        [bp, pr, rr, spo2, temperature, bmi].allSatisfy {
+            ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+    /// Non-empty (label, value) pairs in display order — handy for the UI later.
+    var pairs: [(String, String)] {
+        [("BP", bp), ("PR", pr), ("RR", rr), ("SpO₂", spo2), ("Temp", temperature), ("BMI", bmi)]
+            .compactMap { label, value in
+                let v = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return v.isEmpty ? nil : (label, v)
+            }
+    }
 }
 
 /// Coin-locked expert teaching attached to a case (shown on the answer screen).
@@ -747,10 +926,28 @@ extension ClinicalCase {
         return "case-img-\(candidates[Int(h % UInt64(candidates.count))])"
     }
 
+    /// Hero image for an **emergency** card. Prefers the operating-theatre
+    /// illustrations (case-img-9 / 10) — they read as urgent and show every
+    /// face clearly — unless the case authored its own `imageName`. Stable per
+    /// case, so the same emergency always shows the same one.
+    var emergencyImageName: String {
+        if let n = imageName?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
+        // Operating-theatre / critical-care illustrations, all showing faces
+        // clearly (9,10,18,19 = OR; 21,22,23,32 = ICU / emergency bay).
+        let surgery = [9, 10, 18, 19, 21, 22, 23, 32]
+        var h: UInt64 = 1469598103934665603
+        for b in (specialty + "|" + patientName + "|" + chiefComplaint).utf8 {
+            h = (h ^ UInt64(b)) &* 1099511628211
+        }
+        return "case-img-\(surgery[Int(h % UInt64(surgery.count))])"
+    }
+
     /// Illustration numbers (case-img-N) whose depicted patient roughly matches
-    /// the given gender + age. The bundled images depict, in order:
+    /// the given gender + age. The bundled images depict:
     /// 1,11 young woman · 2 elderly man · 3,4 mother+baby · 5 elderly woman ·
-    /// 6 boy · 7 girl · 8 adult man · 9 surgery (adult) · 10 surgery (elderly man).
+    /// 6 boy · 7 girl · 8 adult man · 9,10,18,19 surgery/OR · 12,13 pregnant woman ·
+    /// 14 girl · 15,16,26 boy · 17,20,21,23,24,25,30 adult man · 22,27,32 older man ·
+    /// 29 adult woman · 28,31 clinic/family (no single patient — safe anywhere).
     static func imageCandidates(gender: String, age: String) -> [Int] {
         let g = gender.lowercased()
         let female = g.hasPrefix("f")
@@ -764,11 +961,16 @@ extension ClinicalCase {
             let n = Int(digits) ?? 30
             group = n <= 1 ? 0 : (n < 13 ? 1 : (n < 60 ? 2 : 3))
         }
+        let neutral = [28, 31]   // clinic/family scenes with no specific patient
         switch group {
-        case 0:  return [3, 4]                                              // baby / infant
-        case 1:  return female ? [7] : (male ? [6] : [6, 7])               // child
-        case 2:  return female ? [1, 11] : (male ? [8, 9] : [1, 8, 9, 11]) // adult
-        default: return female ? [5] : (male ? [2, 10] : [2, 5, 10])       // elderly
+        case 0:  return [3, 4]                                                        // baby / infant
+        case 1:  return female ? [7, 14] : (male ? [6, 15, 16, 26] : [6, 7, 14, 15, 16, 26])  // child
+        case 2:                                                                        // adult
+            let f = [1, 11, 12, 13, 29], m = [8, 17, 20, 21, 23, 24, 25, 30]
+            return (female ? f : (male ? m : f + m)) + neutral
+        default:                                                                       // elderly
+            let f = [5], m = [2, 22, 27, 32]
+            return (female ? f : (male ? m : f + m)) + neutral
         }
     }
 
@@ -798,6 +1000,15 @@ struct InfoCard: Identifiable, Codable {
     let title: String
     let bullets: [String]
     let mentor: String
+    /// Optional system-grouped findings (e.g. physical exam): each renders as a
+    /// heading with its findings as sub-points, alongside any flat `bullets`.
+    var groups: [InfoGroup]? = nil
+}
+
+/// A labelled group of findings within a section (e.g. "Cardiovascular" → […]).
+struct InfoGroup: Codable, Equatable {
+    var system: String
+    var findings: [String]
 }
 
 struct TestOption: Identifiable, Equatable, Codable {
@@ -807,6 +1018,9 @@ struct TestOption: Identifiable, Equatable, Codable {
     let result: String
     let helpful: Bool          // drives mentor feedback
     let mentor: String
+    /// Optional result image (e.g. an ECG strip or chest X-ray), shown under the
+    /// result text. A public URL; `nil` keeps the plain text-only layout.
+    var imageURL: String? = nil
     static func == (l: TestOption, r: TestOption) -> Bool { l.id == r.id }
 }
 
@@ -833,6 +1047,10 @@ final class CaseSession: ObservableObject {
     @Published var tray: [TestOption] = []
     @Published var pickedDiagnosis: DiagnosisOption?
     @Published var treatmentTray: [TreatmentOption] = []
+    /// Set once a free player pays coins to unlock Mentor Insight for this case;
+    /// all its hints then reveal. Pro players don't need this (they tap to
+    /// reveal for free). Per-case, so one payment covers every hint in the case.
+    @Published var mentorUnlocked = false
     /// Server cases are scored remotely; this flips true once the result is in
     /// (or grading failed). The outcome screen waits on it before revealing.
     @Published private(set) var revealed = false
@@ -851,7 +1069,17 @@ final class CaseSession: ObservableObject {
     private var serverXP: Int?
     private var serverCoins: Int?
 
-    init(_ c: ClinicalCase) { self.clinicalCase = c }
+    /// Shuffles the tests/diagnoses/treatments option order fresh for every
+    /// attempt (free and Pro alike), so the right answer's position isn't
+    /// memorizable across replays. `id`-based (and, for server grading,
+    /// name-based) matching elsewhere means reordering these arrays is safe.
+    init(_ c: ClinicalCase) {
+        var shuffled = c
+        shuffled.tests = c.tests.shuffled()
+        shuffled.diagnoses = c.diagnoses.shuffled()
+        shuffled.treatments = c.treatments.shuffled()
+        self.clinicalCase = shuffled
+    }
 
     var diagnosisCorrect: Bool { pickedDiagnosis?.correct ?? false }
 

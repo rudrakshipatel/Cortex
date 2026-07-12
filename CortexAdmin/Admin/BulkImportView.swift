@@ -33,7 +33,7 @@ struct BulkImportView: View {
             } header: {
                 Text("Paste JSON")
             } footer: {
-                Text("A JSON object with \"clinical\", \"daily\" (each with a \"date\") and/or \"emergencies\" (each with a \"sendAt\") arrays. Each case uses \"presentation\", \"history\" and \"examination\" sections (Chief Complaint → History → Physical Examination), and an optional \"mentorInsight\" object (reasoning, differentials, testRationale, treatmentSequencing, pearls, pitfalls, learningPoints). IDs are generated automatically.")
+                Text("A JSON object with \"clinical\", \"daily\" (each with a \"date\") and/or \"emergencies\" (each with a \"sendAt\") arrays. Each case uses \"presentation\", \"history\" and \"examination\" sections (Chief Complaint → History → Physical Examination) — a section can list flat \"bullets\" and/or system \"groups\" (e.g. { \"system\": \"Cardiovascular\", \"findings\": [...] }), and \"mentor\" hints show only on History & Physical Examination. Each test may carry an optional \"imageURL\" (a public image shown under its result — upload one from a Clinical Case form to get the URL). Optional per-case fields: \"vitals\" (bp, pr, rr, spo2, temperature, bmi), \"occupation\", \"duration\", \"title\", \"difficulty\" (1–5), and a \"mentorInsight\" object (reasoning, differentials, testRationale, treatmentSequencing, pearls, pitfalls, learningPoints). IDs are generated automatically. Tap \"Load full example\" for a complete case.")
             }
 
             Section {
@@ -157,48 +157,324 @@ enum JSONTemplates {
     {
       "clinical": [
         {
-          "specialty": "Dermatology",
-          "patientName": "Marco",
+          "title": "Heart Failure with Reduced Ejection Fraction (HFrEF)",
+          "specialty": "Cardiology",
+          "difficulty": 1,
+          "patientName": "Michael Johnson",
           "gender": "Male",
-          "age": "30 Y",
-          "chiefComplaint": "Itchy scaly plaques on elbows",
+          "age": "68 Y",
+          "occupation": "Retired school teacher",
+          "chiefComplaint": "I've been getting more short of breath over the last few days.",
+          "duration": "5 days",
+          "vitals": {
+            "temperature": "98.9°F (37.2°C)",
+            "bp": "168/92 mmHg",
+            "pr": "108 bpm",
+            "rr": "24/min",
+            "spo2": "89% on room air",
+            "bmi": "31 kg/m²"
+          },
           "presentation": {
-            "bullets": ["30M with itchy plaques on the extensor elbows", "Worse in winter"],
-            "mentor": "Extensor distribution is a clue."
+            "bullets": [
+              "68M, retired school teacher",
+              "Chief complaint: progressive shortness of breath",
+              "Duration: 5 days, now at rest"
+            ]
           },
           "history": {
-            "bullets": ["Symptoms for 6 months", "Family history of psoriasis"],
-            "mentor": "Family history supports psoriasis."
+            "bullets": [
+              "Presenting Complaint: Progressive shortness of breath for 5 days, now at rest.",
+              "Orthopnoea: Sleeps on three pillows due to breathlessness when lying flat.",
+              "Paroxysmal Nocturnal Dyspnoea: Wakes at night gasping for air nearly every night.",
+              "Oedema: Bilateral ankle swelling for one week.",
+              "Weight: Gained 5 lb over the past week.",
+              "Functional Status: Fatigue and reduced exercise tolerance.",
+              "Medication History: Missed several doses of his heart and blood pressure medications over the past month.",
+              "Past History: Hypertension, anterior MI (4 years ago), type 2 diabetes.",
+              "Review of Systems: No fever, productive cough, pleuritic chest pain, or recent travel.",
+              "Social History: Former smoker (30 pack-years), quit 10 years ago."
+            ],
+            "mentor": "Pay close attention to how the patient's breathing changes with body position and during sleep. Recent weight gain and missed medications may be an important clue to the cause of this episode."
           },
           "examination": {
-            "bullets": ["Well-demarcated silvery plaques", "Auspitz sign positive"],
-            "mentor": "Silvery scale with Auspitz sign suggests psoriasis."
+            "groups": [
+              {
+                "system": "General",
+                "findings": [
+                  "Mild respiratory distress",
+                  "Speaking in short sentences",
+                  "Sitting upright"
+                ]
+              },
+              {
+                "system": "Hands",
+                "findings": [
+                  "Warm extremities",
+                  "No cyanosis",
+                  "No clubbing"
+                ]
+              },
+              {
+                "system": "Neck",
+                "findings": [
+                  "JVP ≈12 cm H₂O"
+                ]
+              },
+              {
+                "system": "Cardiovascular",
+                "findings": [
+                  "Tachycardia",
+                  "Laterally displaced apex beat",
+                  "S3 gallop",
+                  "No new murmur"
+                ]
+              },
+              {
+                "system": "Respiratory",
+                "findings": [
+                  "Bibasal crackles halfway up both lungs",
+                  "Reduced air entry at both bases",
+                  "No wheeze"
+                ]
+              },
+              {
+                "system": "Abdomen",
+                "findings": [
+                  "Mild hepatomegaly",
+                  "Positive hepatojugular reflux"
+                ]
+              },
+              {
+                "system": "Extremities",
+                "findings": [
+                  "Bilateral 2+ pitting edema to mid-shins"
+                ]
+              }
+            ],
+            "mentor": "Elevated JVP, crackles, and leg edema often indicate a common underlying physiological problem. An S3 heart sound is an important clue when assessing patients with dyspnea."
           },
           "tests": [
-            { "category": "Clinical", "name": "Skin exam",
-              "result": "Auspitz sign positive", "helpful": true,
-              "mentor": "Supports psoriasis." }
+            {
+              "category": "Laboratory",
+              "name": "BNP",
+              "result": "1,560 pg/mL (elevated)",
+              "helpful": true,
+              "mentor": "Supports the diagnosis of heart failure."
+            },
+            {
+              "category": "Laboratory",
+              "name": "CBC",
+              "result": "WBC 7.4, Hb 13.1, Plt 245",
+              "helpful": true,
+              "mentor": "Assesses for anemia or infection."
+            },
+            {
+              "category": "Laboratory",
+              "name": "Comprehensive Metabolic Panel (CMP)",
+              "result": "Na 131, K 4.8, Cr 1.4, BUN 30, AST/ALT normal",
+              "helpful": true,
+              "mentor": "Evaluates renal function and electrolytes before treatment."
+            },
+            {
+              "category": "Laboratory",
+              "name": "High-Sensitivity Troponin",
+              "result": "18 ng/L (stable)",
+              "helpful": true,
+              "mentor": "Looks for myocardial ischemia as a trigger."
+            },
+            {
+              "category": "Laboratory",
+              "name": "Arterial Blood Gas",
+              "result": "Not performed",
+              "helpful": false,
+              "mentor": "Consider only if severe hypoxemia or respiratory failure develops."
+            },
+            {
+              "category": "Cardiac",
+              "name": "ECG",
+              "result": "Sinus tachycardia, old anterior Q waves, LVH, no acute ST elevation",
+              "helpful": true,
+              "mentor": "Detects ischemia or arrhythmias."
+            },
+            {
+              "category": "Cardiac",
+              "name": "Transthoracic Echocardiogram",
+              "result": "EF 30%, dilated LV, global hypokinesis, mild functional MR",
+              "helpful": true,
+              "mentor": "Confirms EF and structural abnormalities."
+            },
+            {
+              "category": "Imaging",
+              "name": "Chest X-ray",
+              "result": "Cardiomegaly, pulmonary vascular congestion, bilateral pulmonary edema, small pleural effusions",
+              "helpful": true,
+              "mentor": "Identifies pulmonary edema and cardiomegaly."
+            },
+            {
+              "category": "Imaging",
+              "name": "CT Pulmonary Angiography",
+              "result": "Not performed",
+              "helpful": false,
+              "mentor": "Not indicated unless PE is strongly suspected."
+            },
+            {
+              "category": "Other",
+              "name": "Lower Extremity Venous Doppler",
+              "result": "Not performed",
+              "helpful": false,
+              "mentor": "No clinical evidence of DVT."
+            },
+            {
+              "category": "Other",
+              "name": "Sputum Culture",
+              "result": "Not performed",
+              "helpful": false,
+              "mentor": "No evidence of respiratory infection."
+            },
+            {
+              "category": "Other",
+              "name": "D-dimer",
+              "result": "Not performed",
+              "helpful": false,
+              "mentor": "Low yield because PE is unlikely."
+            }
           ],
-          "diagnosisQuestion": "Best diagnosis?",
+          "diagnosisQuestion": "Choose the most likely diagnosis.",
           "diagnoses": [
-            { "name": "Plaque psoriasis", "correct": true },
-            { "name": "Eczema", "correct": false }
+            {
+              "name": "Acute decompensated heart failure with reduced ejection fraction",
+              "correct": true
+            },
+            {
+              "name": "COPD exacerbation",
+              "correct": false
+            },
+            {
+              "name": "Acute coronary syndrome",
+              "correct": false
+            },
+            {
+              "name": "Community-acquired pneumonia",
+              "correct": false
+            },
+            {
+              "name": "Pulmonary embolism",
+              "correct": false
+            },
+            {
+              "name": "Acute asthma exacerbation",
+              "correct": false
+            },
+            {
+              "name": "Chronic kidney disease with fluid overload",
+              "correct": false
+            },
+            {
+              "name": "Acute pericarditis",
+              "correct": false
+            },
+            {
+              "name": "Hypertensive emergency",
+              "correct": false
+            },
+            {
+              "name": "Constrictive pericarditis",
+              "correct": false
+            }
           ],
           "treatments": [
-            { "category": "Topical", "name": "Topical steroid", "appropriate": true },
-            { "category": "Antibiotics", "name": "Oral antibiotics", "appropriate": false }
+            {
+              "category": "Acute",
+              "name": "Oxygen",
+              "appropriate": true
+            },
+            {
+              "category": "Acute",
+              "name": "IV Furosemide",
+              "appropriate": true
+            },
+            {
+              "category": "Acute",
+              "name": "Nitroglycerin infusion",
+              "appropriate": true
+            },
+            {
+              "category": "Chronic",
+              "name": "Empagliflozin (after stabilization)",
+              "appropriate": true
+            },
+            {
+              "category": "Chronic",
+              "name": "Sacubitril/Valsartan (after stabilization)",
+              "appropriate": true
+            },
+            {
+              "category": "Chronic",
+              "name": "Metoprolol Succinate (after stabilization)",
+              "appropriate": true
+            },
+            {
+              "category": "Chronic",
+              "name": "Spironolactone",
+              "appropriate": true
+            },
+            {
+              "category": "General",
+              "name": "Sodium and Fluid Restriction",
+              "appropriate": true
+            },
+            {
+              "category": "Other",
+              "name": "Digoxin",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "Lisinopril",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "Hydralazine + Isosorbide Dinitrate",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "Therapeutic anticoagulation",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "IV Antibiotics",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "Nebulized Albuterol",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "Large-volume IV Normal Saline",
+              "appropriate": false
+            },
+            {
+              "category": "Other",
+              "name": "Immediate discharge home",
+              "appropriate": false
+            }
           ],
-          "outcomeTitle": "Nailed it!",
-          "outcomeBody": "Extensor silvery plaques is classic psoriasis.",
-          "xpReward": 20,
+          "outcomeTitle": "Sharp call!",
+          "outcomeBody": "Orthopnoea, PND, elevated JVP, an S3 gallop and pulmonary edema with a markedly raised BNP point to acute decompensated HFrEF (EF 30%). Treat congestion first, then start guideline-directed therapy once stable.",
+          "xpReward": 25,
           "mentorInsight": {
-            "reasoning": "Core clinical insights — how the diagnosis was reached.",
-            "differentials": "Why the other diagnoses didn't fit.",
-            "testRationale": "Why these tests were the right ones to order.",
-            "treatmentSequencing": "Treatment priorities and the order to start them.",
-            "pearls": "Clinical pearls worth remembering.",
-            "pitfalls": "Clinical traps to avoid.",
-            "learningPoints": "Key learning points from this case."
+            "reasoning": "Orthopnea, PND and edema suggest acute heart failure. Elevated JVP, S3 and crackles indicate fluid overload. BNP is markedly elevated, the chest X-ray shows pulmonary edema, and the echocardiogram confirms HFrEF (EF 30%).",
+            "differentials": "COPD exacerbation — wheeze usually present; BNP/pulmonary edema typically absent. Pneumonia — fever, productive cough and focal consolidation expected. PE — usually sudden dyspnoea; pulmonary edema and S3 uncommon. ACS — ongoing ischaemic chest pain with a rising troponin.",
+            "testRationale": "BNP supports heart failure; CBC screens for anemia/infection; CMP checks renal function and electrolytes before diuresis; troponin looks for an ischaemic trigger; ECG for ischaemia/arrhythmia; chest X-ray for edema/cardiomegaly; echo confirms EF. ABG, CTPA, D-dimer, venous Doppler and sputum culture are low-yield here.",
+            "treatmentSequencing": "Stabilise first: oxygen, IV furosemide and (with high BP) a nitroglycerin infusion. After stabilization start guideline-directed therapy — ARNI (sacubitril/valsartan), a beta-blocker (metoprolol succinate), an MRA (spironolactone for EF ≤35%) and an SGLT2 inhibitor (empagliflozin) — plus sodium and fluid restriction. Avoid large-volume IV fluids.",
+            "pearls": "Orthopnea and PND are classic for left-sided heart failure. An S3 gallop strongly suggests volume overload. Interpret BNP with the clinical picture. Echo determines EF and guides long-term therapy. Medication nonadherence is a common trigger.",
+            "pitfalls": "Don't mistake heart failure for COPD on dyspnoea alone. A mild troponin rise doesn't always mean MI. Always look for triggers (nonadherence, ischaemia, arrhythmia, infection, uncontrolled hypertension). Avoid unnecessary IV fluids in volume overload. Up-titrate chronic HFrEF meds only once haemodynamically stable.",
+            "learningPoints": "Recognise acute decompensated HFrEF, treat congestion first, then layer in the four pillars of guideline-directed medical therapy once stable."
           }
         }
       ]

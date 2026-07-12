@@ -11,6 +11,10 @@ struct CortexApp: App {
     @StateObject private var storeManager = StoreManager()
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Configure analytics before the first screen renders, so autocaptured
+    /// screen views and lifecycle events aren't missed.
+    init() { Analytics.start() }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -20,6 +24,13 @@ struct CortexApp: App {
                 .environmentObject(storeManager)
                 .environmentObject(SupabaseService.shared)
                 .tint(CX.orange)
+                // A tapped "Challenge a friend" link (cortex://case/{id} or the
+                // https form) — stash the case id; MainTabView opens it once
+                // content is ready.
+                .onOpenURL { url in
+                    if let id = CXDeepLink.parseCaseID(from: url) { app.pendingCaseLink = id }
+                    else if let code = CXDeepLink.parseInviteCode(from: url) { app.pendingInviteCode = code }
+                }
                 // Refill Energy (and roll the league) whenever the app comes to the
                 // foreground, so a new GMT day restores energy even if the app was
                 // left open or backgrounded across midnight.
@@ -40,6 +51,18 @@ struct CortexApp: App {
                 // Mirror the real StoreKit subscription entitlement into AppState.
                 .onChange(of: storeManager.isPro) { _, pro in app.isPro = pro }
                 .task(id: storeManager.isPro) { app.isPro = storeManager.isPro }
+                // Keep the RevenueCat identity == the Supabase user, so the
+                // referral reward (a server-side promo grant) reaches this account.
+                // Analytics uses the same id so events and revenue line up.
+                .task(id: SupabaseService.shared.userId) {
+                    let uid = SupabaseService.shared.userId
+                    await storeManager.identify(uid)
+                    Analytics.identify(uid, properties: [
+                        "position": app.position,
+                        "country": app.country,
+                        "is_pro": app.isPro,
+                    ])
+                }
                 .task {
                     // Register for remote push (used to broadcast emergencies) and
                     // pull any content published to all users.
@@ -51,6 +74,8 @@ struct CortexApp: App {
                     await SupabaseService.shared.submitScore(
                         playerId: app.leaderboardId, username: app.displayName, xp: app.lifetimeXP)
                 }
+                // Hide clinical content from the app-switcher snapshot / backgrounding.
+                .privacyCoverWhenInactive()
         }
     }
 }
@@ -60,22 +85,34 @@ struct RootView: View {
     @EnvironmentObject var sb: SupabaseService
     var body: some View {
         Group {
+            #if DEBUG
+            // Screenshot-only screen router. Compiled out of Release entirely, so
+            // the routing table and its seed data never ship in the store binary.
             if let key = ProcessInfo.processInfo.environment["CX_SCREEN"], !key.isEmpty {
-                DebugRouter(key: key)                 // verification-only, off in production
-            } else if !sb.isSignedIn && !app.onboarded {
-                OnboardingFlow(startAt: .intro)       // first run: sign-in is optional (can skip)
-            } else if app.isSyncing {
-                SyncingScreen()                       // loading this account's cloud profile
-            } else if !app.onboarded {
-                OnboardingFlow(startAt: .country)     // new account finishes onboarding
+                DebugRouter(key: key)
             } else {
-                MainTabView()
+                mainContent
             }
+            #else
+            mainContent
+            #endif
         }
         .transition(.opacity)
         .animation(.easeInOut, value: sb.isSignedIn)
         .animation(.easeInOut, value: app.isSyncing)
         .animation(.easeInOut, value: app.onboarded)
+    }
+
+    @ViewBuilder private var mainContent: some View {
+        if !sb.isSignedIn && !app.onboarded {
+            OnboardingFlow(startAt: .welcome)         // first run: sign-in is optional (can skip)
+        } else if app.isSyncing {
+            SyncingScreen()                           // loading this account's cloud profile
+        } else if !app.onboarded {
+            OnboardingFlow(startAt: .profession)      // new account finishes onboarding (auth already done)
+        } else {
+            MainTabView()
+        }
     }
 }
 
@@ -92,16 +129,18 @@ struct SyncingScreen: View {
     }
 }
 
+#if DEBUG
 /// Renders a single screen selected by the CX_SCREEN launch env var so each
-/// screen can be screenshotted without UI automation. Inert unless the var is set.
+/// screen can be screenshotted without UI automation. Debug builds only — this
+/// whole type is compiled out of Release.
 struct DebugRouter: View {
     let key: String
     var body: some View {
         switch key {
         case "auth":          OnboardingFlow(startAt: .auth)
         case "country":       OnboardingFlow(startAt: .country)
-        case "reminder":      OnboardingFlow(startAt: .reminder)
-        case "intro":         OnboardingFlow(startAt: .intro)
+        case "reminder":      OnboardingFlow(startAt: .commitment)
+        case "intro":         OnboardingFlow(startAt: .welcome)
         case "case_info":     CaseFlow(clinicalCase: Seed.rlsCase)
         case "case_tests":    CaseFlow(clinicalCase: Seed.rlsCase, initialStep: .tests)
         case "case_results":  CaseFlow(clinicalCase: Seed.rlsCase, initialStep: .results)
@@ -119,3 +158,4 @@ struct DebugRouter: View {
         }
     }
 }
+#endif

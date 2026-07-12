@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 // MARK: - Clinical case form
 
@@ -136,6 +138,7 @@ struct CaseEditor<Header: View>: View {
                     TextField("Result", text: $t.result)
                     Toggle("Helpful / high-yield", isOn: $t.helpful)
                     TextField("Mentor note", text: $t.mentor, axis: .vertical).lineLimit(1...3)
+                    TestImageAttachment(imageURL: $t.imageURL)
                 }
             }
             addRemoveRow("test", count: draft.tests.count,
@@ -276,7 +279,8 @@ struct CaseDraft {
             }
         }
         tests = c.tests.map {
-            TestDraft(category: $0.category, name: $0.name, result: $0.result, helpful: $0.helpful, mentor: $0.mentor)
+            TestDraft(category: $0.category, name: $0.name, result: $0.result,
+                      helpful: $0.helpful, mentor: $0.mentor, imageURL: $0.imageURL ?? "")
         }
         if tests.isEmpty { tests = [TestDraft()] }
         diagnosisQuestion = c.diagnosisQuestion
@@ -321,7 +325,8 @@ struct CaseDraft {
             ].filter { !$0.bullets.isEmpty || !$0.mentor.isEmpty },
             tests: tests.filter { !$0.name.trimmed.isEmpty }.map {
                 TestOption(category: $0.category.trimmed, name: $0.name.trimmed,
-                           result: $0.result.trimmed, helpful: $0.helpful, mentor: $0.mentor.trimmed)
+                           result: $0.result.trimmed, helpful: $0.helpful, mentor: $0.mentor.trimmed,
+                           imageURL: $0.imageURL.trimmed.isEmpty ? nil : $0.imageURL.trimmed)
             },
             diagnosisQuestion: diagnosisQuestion.trimmed,
             diagnoses: diagnoses.filter { !$0.name.trimmed.isEmpty }.map {
@@ -359,6 +364,85 @@ struct CaseDraft {
 }
 
 struct InfoCardDraft: Identifiable { var id = UUID(); var title = ""; var bulletsText = ""; var mentor = "" }
-struct TestDraft: Identifiable { var id = UUID(); var category = ""; var name = ""; var result = ""; var helpful = false; var mentor = "" }
+// MARK: - Attach an optional result image to a test
+
+/// Picks an image, normalises it to a reasonably-sized JPEG, uploads it to the
+/// public `case-images` bucket and stores the returned URL on the test. Leaving
+/// it empty keeps the player's text-only result card.
+struct TestImageAttachment: View {
+    @Binding var imageURL: String
+    @EnvironmentObject var sb: SupabaseService
+    @State private var item: PhotosPickerItem?
+    @State private var uploading = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let url = URL(string: imageURL), !imageURL.isEmpty {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit().frame(maxHeight: 140)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                } placeholder: {
+                    ProgressView().frame(height: 60)
+                }
+                Button(role: .destructive) { imageURL = "" } label: {
+                    Label("Remove image", systemImage: "trash")
+                }.font(.footnote)
+            }
+
+            PhotosPicker(selection: $item, matching: .images) {
+                HStack(spacing: 8) {
+                    if uploading { ProgressView() }
+                    Label(imageURL.isEmpty ? "Attach result image" : "Replace image",
+                          systemImage: "photo.badge.plus")
+                }
+            }
+            .disabled(uploading || !sb.isAdminSignedIn)
+
+            if !sb.isAdminSignedIn {
+                Text("Sign in under Cloud sync to upload images.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .onChange(of: item) { _, newItem in
+            guard let newItem else { return }
+            Task { await upload(newItem) }
+        }
+    }
+
+    private func upload(_ picked: PhotosPickerItem) async {
+        uploading = true; error = nil
+        defer { uploading = false; item = nil }
+        do {
+            guard let raw = try await picked.loadTransferable(type: Data.self),
+                  let jpeg = Self.jpeg(from: raw) else {
+                error = "Couldn't read that image."
+                return
+            }
+            imageURL = try await sb.uploadCaseImage(jpeg)
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Upload failed. Try again."
+        }
+    }
+
+    /// Downscale to at most `maxDimension` px on the long edge and re-encode as
+    /// JPEG — keeps HEIC photos portable and uploads small.
+    private static func jpeg(from data: Data, maxDimension: CGFloat = 1600) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let longEdge = max(image.size.width, image.size.height)
+        guard longEdge > maxDimension else { return image.jpegData(compressionQuality: 0.85) }
+        let scale = maxDimension / longEdge
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let resized = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return resized.jpegData(compressionQuality: 0.85)
+    }
+}
+
+struct TestDraft: Identifiable { var id = UUID(); var category = ""; var name = ""; var result = ""; var helpful = false; var mentor = ""; var imageURL = "" }
 struct DiagnosisDraft: Identifiable { var id = UUID(); var name = ""; var correct = false }
 struct TreatmentDraft: Identifiable { var id = UUID(); var category = ""; var name = ""; var appropriate = false }
