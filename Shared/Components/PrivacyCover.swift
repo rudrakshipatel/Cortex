@@ -7,10 +7,14 @@ import SwiftUI
 /// no state beyond the scene phase the system already tracks.
 private struct PrivacyCover: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
+    // Only cover once the app has actually been active. This avoids flashing the
+    // cover during the brief `.inactive` phase of a cold launch (which otherwise
+    // looks like a "lock screen" on startup).
+    @State private var wasActive = false
 
     func body(content: Content) -> some View {
         content.overlay {
-            if scenePhase != .active {
+            if wasActive && scenePhase != .active {
                 // No transition: the cover must be present the instant the scene
                 // goes inactive, before iOS captures the app-switcher snapshot —
                 // an animated fade-in could leak a frame of real content.
@@ -23,6 +27,9 @@ private struct PrivacyCover: ViewModifier {
             }
         }
         .animation(nil, value: scenePhase)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { wasActive = true }
+        }
     }
 }
 

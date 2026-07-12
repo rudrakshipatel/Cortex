@@ -166,37 +166,75 @@ private struct ScreenTitle: View {
 private struct WelcomeScreen: View {
     var onStart: () -> Void
     @State private var shown = false
+    @State private var pulse = false     // halo + CTA breathing
+    @State private var bob = false       // mascot float + ambient drift
+    @State private var kick = false      // tap reaction on the mascot
 
     var body: some View {
-        VStack(spacing: 22) {
-            HStack {
-                CortexLogo(layout: .horizontal, size: 34)
+        ZStack {
+            // Ambient drifting colour orbs behind everything.
+            Circle().fill(CX.tealSoft).frame(width: 280, height: 280)
+                .blur(radius: 42).opacity(0.65)
+                .offset(x: bob ? -110 : -80, y: bob ? -250 : -300)
+            Circle().fill(CX.orangeSoft).frame(width: 260, height: 260)
+                .blur(radius: 42).opacity(0.65)
+                .offset(x: bob ? 120 : 90, y: bob ? 280 : 330)
+
+            VStack(spacing: 22) {
+                HStack { CortexLogo(layout: .horizontal, size: 34); Spacer() }
+                    .padding(.horizontal, 22).padding(.top, 8)
+
                 Spacer()
-            }
-            .padding(.horizontal, 22).padding(.top, 8)
 
-            Spacer()
-            VixClip(anim: .wave, size: 168, fallback: .idle)
+                // Mascot on a pulsing halo — tap it for a playful bounce.
+                ZStack {
+                    Circle().fill(CX.teal.opacity(0.12))
+                        .frame(width: 220, height: 220)
+                        .scaleEffect(pulse ? 1.08 : 0.9)
+                    Circle().stroke(CX.teal.opacity(0.28), lineWidth: 2)
+                        .frame(width: 196, height: 196)
+                        .scaleEffect(pulse ? 1.15 : 0.98).opacity(pulse ? 0 : 0.8)
+                    VixClip(anim: .wave, size: 168, fallback: .cheer)
+                        .offset(y: bob ? -7 : 7)
+                        .scaleEffect(kick ? 1.07 : 1)
+                }
                 .bounceIn()
-            VStack(spacing: 10) {
-                Text("Think like a clinician.")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
-                    .foregroundStyle(CX.navy).multilineTextAlignment(.center)
-                Text("Not a quiz — a real patient to work up, from the first complaint to the final call.")
-                    .font(CX.body(16)).foregroundStyle(CX.navySoft)
-                    .multilineTextAlignment(.center).padding(.horizontal, 12)
-            }
-            .opacity(shown ? 1 : 0).offset(y: shown ? 0 : 14)
+                .contentShape(Circle())
+                .onTapGesture {
+                    Haptics.light()
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.4)) { kick = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { kick = false }
+                    }
+                }
 
-            Spacer()
-            VStack(spacing: 12) {
-                CXButton(title: "Get started") { Haptics.medium(); onStart() }
-                Text("Your first patient is already waiting.")
-                    .font(CX.label(12)).foregroundStyle(CX.teal)
+                VStack(spacing: 10) {
+                    Text("Think like a clinician.")
+                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .foregroundStyle(CX.navy).multilineTextAlignment(.center)
+                    Text("Not a quiz — a real patient to work up, from the first complaint to the final call.")
+                        .font(CX.body(16)).foregroundStyle(CX.navySoft)
+                        .multilineTextAlignment(.center).padding(.horizontal, 12)
+                }
+                .opacity(shown ? 1 : 0).offset(y: shown ? 0 : 18)
+
+                Spacer()
+
+                VStack(spacing: 12) {
+                    CXButton(title: "Get started") { Haptics.medium(); onStart() }
+                        .scaleEffect(pulse ? 1.015 : 0.985)
+                    Text("Tap Dr. Vix to say hi — your first patient is already waiting.")
+                        .font(CX.label(12)).foregroundStyle(CX.teal)
+                        .multilineTextAlignment(.center)
+                }
             }
+            .padding(.horizontal, 22).padding(.bottom, 26)
         }
-        .padding(.horizontal, 22).padding(.bottom, 26)
-        .onAppear { withAnimation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.15)) { shown = true } }
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.15)) { shown = true }
+            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { pulse = true }
+            withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: true)) { bob = true }
+        }
     }
 }
 
@@ -411,6 +449,7 @@ private struct ProfessionScreen: View {
         .init(name: "Dentist", icon: "mouth.fill"),
         .init(name: "Physician Assistant", icon: "person.2.fill"),
         .init(name: "Nurse Practitioner", icon: "cross.vial.fill"),
+        .init(name: "Other", icon: "ellipsis.circle.fill"),
     ]
 
     var body: some View {
