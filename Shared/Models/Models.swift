@@ -977,7 +977,44 @@ final class CaseSession: ObservableObject {
     private var serverXP: Int?
     private var serverCoins: Int?
 
-    init(_ c: ClinicalCase) { self.clinicalCase = c }
+    // MARK: Display order
+    //
+    // The pick lists, shuffled once per play so no two players are asked the
+    // same arrangement. Tests and treatments shuffle only *within* a category,
+    // leaving the authored headings and their order untouched.
+    //
+    // `clinicalCase` itself is never reordered: grading addresses options by
+    // their authored index, so these are strictly a display concern. They hold
+    // the same option values (same ids), so picks map back correctly.
+    @Published private(set) var shuffledTests: [TestOption] = []
+    @Published private(set) var shuffledTreatments: [TreatmentOption] = []
+    @Published private(set) var shuffledDiagnoses: [DiagnosisOption] = []
+
+    init(_ c: ClinicalCase) {
+        self.clinicalCase = c
+        makeDisplayOrder()
+    }
+
+    /// Re-roll the display order for the current case. Called once per session,
+    /// and again when a graded case replaces the stripped one.
+    private func makeDisplayOrder() {
+        shuffledTests      = Self.shuffledWithinCategory(clinicalCase.tests, by: \.category)
+        shuffledTreatments = Self.shuffledWithinCategory(clinicalCase.treatments, by: \.category)
+        shuffledDiagnoses  = clinicalCase.diagnoses.shuffled()
+    }
+
+    /// Shuffle the options inside each category, keeping the categories
+    /// themselves in the order the author wrote them.
+    private static func shuffledWithinCategory<T>(_ items: [T], by category: KeyPath<T, String>) -> [T] {
+        var order: [String] = []
+        var byCategory: [String: [T]] = [:]
+        for item in items {
+            let key = item[keyPath: category]
+            if byCategory[key] == nil { order.append(key) }
+            byCategory[key, default: []].append(item)
+        }
+        return order.flatMap { byCategory[$0]!.shuffled() }
+    }
 
     var diagnosisCorrect: Bool { pickedDiagnosis?.correct ?? false }
 
@@ -1092,6 +1129,7 @@ final class CaseSession: ObservableObject {
             graded.treatments.first { $0.name == name } ?? (graded.treatments.indices.contains(idx) ? graded.treatments[idx] : nil)
         }
         clinicalCase = graded
+        makeDisplayOrder()   // the stripped options are gone; re-order the new ones
         serverXP = xp
         serverCoins = coins
     }

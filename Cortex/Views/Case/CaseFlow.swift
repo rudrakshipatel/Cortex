@@ -415,9 +415,10 @@ private struct TestsStep: View {
     @ObservedObject var session: CaseSession
     var onNext: () -> Void
     @State private var performing = false
-    var tests: [TestOption] { session.clinicalCase.tests }
+    /// Shuffled within each category — the headings keep their authored order.
+    var tests: [TestOption] { session.shuffledTests }
 
-    /// Tests grouped by category, preserving authored order.
+    /// Tests grouped by category, preserving authored category order.
     private var grouped: [(category: String, items: [TestOption])] {
         var order: [String] = []
         var map: [String: [TestOption]] = [:]
@@ -638,7 +639,7 @@ private struct DiagnosisStep: View {
                     Text(session.clinicalCase.diagnosisQuestion)
                         .font(CX.heading(18)).foregroundStyle(CX.navy)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    ForEach(session.clinicalCase.diagnoses) { d in
+                    ForEach(session.shuffledDiagnoses) { d in
                         Button { withAnimation { picked = d; session.pickedDiagnosis = d } } label: {
                             HStack {
                                 Text(d.name).font(CX.body(16)).foregroundStyle(CX.navy)
@@ -682,11 +683,12 @@ private struct TreatmentStep: View {
     var onNext: () -> Void
 
     /// Treatments bucketed under their category, in first-appearance order —
-    /// the same shape the Tests step uses.
+    /// the same shape the Tests step uses. Shuffled within each category; the
+    /// headings keep their authored order.
     private var grouped: [(category: String, items: [TreatmentOption])] {
         var order: [String] = []
         var map: [String: [TreatmentOption]] = [:]
-        for t in session.clinicalCase.treatments {
+        for t in session.shuffledTreatments {
             if map[t.category] == nil { order.append(t.category) }
             map[t.category, default: []].append(t)
         }
