@@ -826,11 +826,21 @@ private struct CountryScreen: View {
         self.progress = progress
         self.onBack = onBack
         self.onNext = onNext
-        // Default to the device's region, else United States.
-        let code = Locale.current.region?.identifier
-        let name = code.flatMap { Locale(identifier: "en_US").localizedString(forRegionCode: $0) }
-        _selected = State(initialValue: name ?? "United States")
+        _selected = State(initialValue: Self.defaultCountry)
     }
+
+    /// The pre-selected country. The United States by default, per the flow's
+    /// design — not the device region.
+    private static let defaultCountry = "United States"
+
+    /// Popular practice locations, pinned above the full list in this order.
+    private static let popularNames = [
+        "United States", "United Kingdom", "Australia", "Canada", "New Zealand",
+        "India", "Germany", "Japan", "Spain", "France", "Brazil", "Nigeria",
+        "Pakistan", "Bangladesh", "South Africa", "China", "Egypt", "Mexico",
+        "Indonesia", "Philippines", "Nepal", "Sri Lanka", "United Arab Emirates",
+        "Saudi Arabia", "Italy", "Netherlands", "Singapore", "Kenya", "Ghana", "Ireland",
+    ]
 
     /// Every ISO country, with its flag, sorted by name (built once).
     private static let all: [(name: String, flag: String)] = {
@@ -844,6 +854,19 @@ private struct CountryScreen: View {
             .sorted { $0.0 < $1.0 }
     }()
 
+    /// The popular entries, in their pinned order (dropping any the platform
+    /// doesn't name).
+    private static let popular: [(name: String, flag: String)] = {
+        let byName = Dictionary(all.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        return popularNames.compactMap { byName[$0] }
+    }()
+
+    /// Everything else, alphabetical.
+    private static let rest: [(name: String, flag: String)] = {
+        let pinned = Set(popularNames)
+        return all.filter { !pinned.contains($0.name) }
+    }()
+
     /// Turn a 2-letter ISO code into its flag emoji (regional indicators).
     private static func flag(_ code: String) -> String {
         code.uppercased().unicodeScalars
@@ -851,9 +874,12 @@ private struct CountryScreen: View {
             .joined()
     }
 
+    private var query: String { search.trimmingCharacters(in: .whitespaces).lowercased() }
+
+    /// While searching, one flat list across every country; otherwise the pinned
+    /// popular ones first, then the rest under their own heading.
     private var filtered: [(name: String, flag: String)] {
-        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return q.isEmpty ? Self.all : Self.all.filter { $0.name.lowercased().contains(q) }
+        Self.all.filter { $0.name.lowercased().contains(query) }
     }
 
     var body: some View {
@@ -880,26 +906,12 @@ private struct CountryScreen: View {
 
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 10) {
-                    ForEach(filtered, id: \.name) { c in
-                        Button {
-                            UISelectionFeedbackGenerator().selectionChanged()
-                            selected = c.name
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text(c.flag).font(.system(size: 26))
-                                Text(c.name).font(CX.body(17)).foregroundStyle(CX.navy)
-                                    .multilineTextAlignment(.leading)
-                                Spacer()
-                                Image(systemName: selected == c.name ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 22))
-                                    .foregroundStyle(selected == c.name ? CX.orange : CX.hairline)
-                            }
-                            .padding(16)
-                            .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(selected == c.name ? CX.orange : CX.hairline, lineWidth: 1.5))
-                        }
-                        .buttonStyle(.plain)
+                    if query.isEmpty {
+                        ForEach(Self.popular, id: \.name) { row($0) }
+                        heading("ALL COUNTRIES")
+                        ForEach(Self.rest, id: \.name) { row($0) }
+                    } else {
+                        ForEach(filtered, id: \.name) { row($0) }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -908,6 +920,34 @@ private struct CountryScreen: View {
                 .padding(.horizontal, 20)
         }
         .padding(.bottom, 20)
+    }
+
+    private func heading(_ text: String) -> some View {
+        Text(text).font(CX.label(12)).foregroundStyle(CX.navySoft)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 8)
+    }
+
+    private func row(_ c: (name: String, flag: String)) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            selected = c.name
+        } label: {
+            HStack(spacing: 12) {
+                Text(c.flag).font(.system(size: 26))
+                Text(c.name).font(CX.body(17)).foregroundStyle(CX.navy)
+                    .multilineTextAlignment(.leading)
+                Spacer()
+                Image(systemName: selected == c.name ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22))
+                    .foregroundStyle(selected == c.name ? CX.orange : CX.hairline)
+            }
+            .padding(16)
+            .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(selected == c.name ? CX.orange : CX.hairline, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
     }
 }
 

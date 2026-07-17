@@ -47,12 +47,12 @@ struct CaseFlow: View {
                 header
                 Group {
                     switch step {
-                    case .info:      InfoStep(session: session) { step = .tests }
+                    case .info:      InfoStep(session: session, onboarding: onboarding) { step = .tests }
                     case .tests:     TestsStep(session: session) { step = .results }
                     case .results:   ResultsStep(session: session, onBack: { step = .tests }) { step = .diagnosis }
                     case .diagnosis: DiagnosisStep(session: session) { step = .treatment }
                     case .treatment: TreatmentStep(session: session) { step = .outcome }
-                    case .outcome:   OutcomeStep(session: session) { finish() }
+                    case .outcome:   OutcomeStep(session: session, onboarding: onboarding) { finish() }
                         .onAppear { recordOutcome() }   // save the moment the outcome is reached
                     }
                 }
@@ -196,6 +196,9 @@ struct CaseFlow: View {
     private func award() {
         guard !awarded, session.gradeError == nil else { return }   // don't award on a grading failure
         awarded = true
+        // Onboarding is a guest, value-first solve: no energy/coins/XP/streak —
+        // just surface the result so the trimmed outcome can render.
+        if onboarding { onFinish?(session.solved); return }
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
         if consumesLife { app.spendEnergy(app.randomCaseCost) }   // 16.5 for free, 8.5 for Pro
@@ -215,6 +218,8 @@ struct CaseFlow: View {
 
     /// "Continue" on the outcome — result is already recorded; show the celebration.
     private func finish() {
+        // Onboarding: no reward cover / Pro upsell — hand straight back to the flow.
+        if onboarding { onboardingContinue?(); return }
         recordOutcome()
         showStreak = true
     }
@@ -223,9 +228,6 @@ struct CaseFlow: View {
     /// get the Go Pro screen first, then return when they dismiss it.
     private func finishReward() {
         showStreak = false
-        // Onboarding carries on to its own next step instead of dismissing, and
-        // never shows the mid-flow upsell — the paywall comes after sign-in.
-        if onboarding { onboardingContinue?(); return }
         guard !app.isPro else { dismiss(); return }
         // Let the reward cover finish dismissing before presenting the sheet.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProUpsell = true }
@@ -235,6 +237,8 @@ struct CaseFlow: View {
 // MARK: - Step 1: Patient info cards
 private struct InfoStep: View {
     @ObservedObject var session: CaseSession
+    /// The onboarding solve keeps the pages clean — no mentor insight to unlock.
+    var onboarding = false
     var onNext: () -> Void
     @State private var page = 0
     var cards: [InfoCard] { session.clinicalCase.orderedInfoCards }
@@ -354,6 +358,7 @@ private struct InfoStep: View {
     /// Mentor insight is offered only on the History and Physical Examination
     /// pages (and only when that page actually has a hint).
     private func showsMentor(_ c: InfoCard) -> Bool {
+        guard !onboarding else { return false }
         let t = c.title.lowercased()
         let historyOrExam = t.contains("history") || t.contains("hx") || t.contains("exam")
         return historyOrExam && !c.mentor.trimmed.isEmpty
@@ -761,6 +766,8 @@ private struct TreatmentStep: View {
 private struct OutcomeStep: View {
     @ObservedObject var session: CaseSession
     @EnvironmentObject var app: AppState
+    /// Onboarding shows a trimmed verdict instead of the scored outcome.
+    var onboarding = false
     var onDone: () -> Void
     @State private var showPro = false
     @State private var signingIn = false
@@ -884,6 +891,8 @@ private struct OutcomeStep: View {
         // anything (otherwise the answer/score would flash as a wrong "0").
         if let gradeError = session.gradeError {
             gradeErrorView(gradeError)
+        } else if onboarding, session.revealed || session.hasLocalKey {
+            onboardingOutcome
         } else if session.revealed || session.hasLocalKey {
             content
         } else if session.needsSignIn {
@@ -895,6 +904,42 @@ private struct OutcomeStep: View {
                 Text("Scoring your case…").font(CX.heading(18)).foregroundStyle(CX.navySoft)
                 Spacer()
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Trimmed outcome for the onboarding case: Dr. Vix delivers the verdict in a
+    /// speech bubble, then the recap line, final diagnosis and case review — no
+    /// XP/coins/badge, no learning breakdown. Continue hands back to the flow.
+    private var onboardingOutcome: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .center, spacing: 12) {
+                    Image("vix-standing")
+                        .resizable().scaledToFill()
+                        .frame(width: 96, height: 96)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    SpeechBubble {
+                        Text(correct ? "Well Done" : "Well Tried")
+                            .font(CX.title(20)).foregroundStyle(CX.navy)
+                    }
+                }
+                Text(correct ? session.clinicalCase.outcomeBody
+                     : "Mistakes help you build real clinical judgment. Take the learnings and move forward stronger.")
+                    .font(CX.body(16)).foregroundStyle(CX.navySoft)
+
+                CXCard {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("FINAL DIAGNOSIS").font(CX.label(12)).foregroundStyle(CX.navySoft)
+                        Text(session.clinicalCase.diagnoses.first(where: \.correct)?.name ?? "—")
+                            .font(CX.heading(18)).foregroundStyle(CX.teal)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                CaseReviewCard(session: session)
+
+                CXButton(title: "Continue") { onDone() }
+            }
+            .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 24)
         }
     }
 
