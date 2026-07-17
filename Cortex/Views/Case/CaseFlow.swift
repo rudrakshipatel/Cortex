@@ -306,9 +306,11 @@ private struct InfoStep: View {
                     if showPatient {
                         // The case's own illustration — picked to match the
                         // patient's age and gender (or authored via `imageName`).
+                        // Fit (not fill) so the whole illustration shows; the box
+                        // grows to the art's natural height instead of cropping it.
                         Image(session.clinicalCase.heroImageName)
-                            .resizable().scaledToFill()
-                            .frame(maxWidth: .infinity).frame(height: 150)
+                            .resizable().scaledToFit()
+                            .frame(maxWidth: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .fill(CX.tealSoft).frame(height: 140)
