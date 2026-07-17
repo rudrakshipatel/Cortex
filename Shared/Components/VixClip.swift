@@ -38,7 +38,7 @@ struct VixClip: View {
 }
 
 // MARK: - AVPlayer-backed looping video (muted, aspect-fill)
-private struct LoopingVideo: UIViewRepresentable {
+struct LoopingVideo: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> LoopingPlayerView { LoopingPlayerView(url: url) }
     func updateUIView(_ uiView: LoopingPlayerView, context: Context) {}

@@ -492,6 +492,25 @@ final class SupabaseService: ObservableObject {
         let payload: CaseDTO; let send_date: String; let local_hour: Int; let local_minute: Int
     }
 
+    // MARK: - Case images (admin uploads a test's result image)
+
+    /// The public Storage bucket result images live in. Created by setup_all.sql.
+    static let caseImageBucket = "case-images"
+
+    /// Upload a result image and return its public URL, ready to store on the
+    /// test. Admin-only: the bucket's RLS lets anyone read but only an admin write.
+    func uploadCaseImage(_ data: Data, fileExtension: String = "jpg") async throws -> String {
+        guard isConfigured else { throw SBError.notConfigured }
+        guard isAdminSignedIn else { throw SBError.notSignedIn }
+        let name = "\(UUID().uuidString.lowercased()).\(fileExtension)"
+        let mime = fileExtension.lowercased() == "png" ? "image/png" : "image/jpeg"
+        _ = try await send(method: "POST",
+                           path: "storage/v1/object/\(Self.caseImageBucket)/\(name)",
+                           body: data, admin: true,
+                           extraHeaders: ["Content-Type": mime, "x-upsert": "true"])
+        return "\(SupabaseConfig.url)/storage/v1/object/public/\(Self.caseImageBucket)/\(name)"
+    }
+
     /// Publish parsed bulk content to all users. Returns how many items went up.
     @discardableResult
     func publish(_ payload: ImportPayload) async throws -> Int {

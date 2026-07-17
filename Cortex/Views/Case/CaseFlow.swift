@@ -6,6 +6,11 @@ struct CaseFlow: View {
     var consumesLife: Bool = true
     /// Called when the case is finished, with whether the diagnosis was correct.
     var onFinish: ((Bool) -> Void)? = nil
+    /// True for the onboarding mini-case: there's no way out but forward, and the
+    /// Go Pro upsell is suppressed (onboarding shows its own paywall at the end).
+    var onboarding: Bool = false
+    /// Where onboarding continues once the case is done. Replaces `dismiss()`.
+    var onboardingContinue: (() -> Void)? = nil
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var app: AppState
     @StateObject private var session: CaseSession
@@ -21,10 +26,13 @@ struct CaseFlow: View {
     enum Step: Int, CaseIterable { case info, tests, results, diagnosis, treatment, outcome }
 
     init(clinicalCase: ClinicalCase, initialStep: Step = .info,
-         consumesLife: Bool = true, onFinish: ((Bool) -> Void)? = nil) {
+         consumesLife: Bool = true, onFinish: ((Bool) -> Void)? = nil,
+         onboarding: Bool = false, onboardingContinue: (() -> Void)? = nil) {
         self.clinicalCase = clinicalCase
         self.consumesLife = consumesLife
         self.onFinish = onFinish
+        self.onboarding = onboarding
+        self.onboardingContinue = onboardingContinue
         let s = CaseSession(clinicalCase)
         if initialStep.rawValue >= Step.outcome.rawValue {
             s.pickedDiagnosis = clinicalCase.diagnoses.first { $0.correct }
@@ -99,10 +107,15 @@ struct CaseFlow: View {
 
     private var header: some View {
         HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(CX.navy).frame(width: 40, height: 40)
-                    .background(CX.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            // No bailing out of the onboarding case — it's the whole point of the flow.
+            if onboarding {
+                Color.clear.frame(width: 40, height: 40)
+            } else {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(CX.navy).frame(width: 40, height: 40)
+                        .background(CX.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
             }
             Spacer()
             Text(clinicalCase.specialty.uppercased())
@@ -152,9 +165,15 @@ struct CaseFlow: View {
             parts.append(session.solved ? c.outcomeTitle : "Every expert starts here.")
             parts.append(c.outcomeBody)
         }
-        if app.isPro {
-            let hints = c.infoCards.map(\.mentor) + c.tests.map(\.mentor)
-            parts.append(contentsOf: hints.filter { !$0.isEmpty }.map { "Mentor insight: \($0)" })
+        // Read the hints that are actually on screen: History and Physical
+        // Examination are the only pages that carry one, and only once the
+        // player has tapped it open.
+        if app.isPro, step == .info {
+            let hints = c.infoCards.filter { card in
+                let t = card.title.lowercased()
+                return t.contains("history") || t.contains("hx") || t.contains("exam")
+            }.map(\.mentor).filter { session.revealedMentorHints.contains($0) }
+            parts.append(contentsOf: hints.filter { !$0.trimmed.isEmpty }.map { "Mentor insight: \($0)" })
         }
         return parts.joined(separator: " ")
     }
@@ -179,7 +198,7 @@ struct CaseFlow: View {
         awarded = true
         app.award(coins: session.earnedCoins)   // spendable currency (scales with case)
         app.award(xp: session.earnedXP)          // lifetime/weekly score, out of 100 max
-        if consumesLife { app.spendEnergy(app.randomCaseCost) }   // 50 for free, 0 for Pro
+        if consumesLife { app.spendEnergy(app.randomCaseCost) }   // 16.5 for free, 8.5 for Pro
         // A case counts as "solved" only if the attempt scored ≥ 25 XP;
         // below that it stays unsolved and can be replayed.
         if session.solved {
@@ -204,6 +223,9 @@ struct CaseFlow: View {
     /// get the Go Pro screen first, then return when they dismiss it.
     private func finishReward() {
         showStreak = false
+        // Onboarding carries on to its own next step instead of dismissing, and
+        // never shows the mid-flow upsell — the paywall comes after sign-in.
+        if onboarding { onboardingContinue?(); return }
         guard !app.isPro else { dismiss(); return }
         // Let the reward cover finish dismissing before presenting the sheet.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showProUpsell = true }
@@ -278,6 +300,12 @@ private struct InfoStep: View {
                     Text(c.title).font(CX.heading(22)).foregroundStyle(CX.navy)
                         .multilineTextAlignment(.center)
                     if showPatient {
+                        // The case's own illustration — picked to match the
+                        // patient's age and gender (or authored via `imageName`).
+                        Image(session.clinicalCase.heroImageName)
+                            .resizable().scaledToFill()
+                            .frame(maxWidth: .infinity).frame(height: 150)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .fill(CX.tealSoft).frame(height: 140)
                             .overlay(
@@ -288,6 +316,10 @@ private struct InfoStep: View {
                                 }
                             )
                     }
+                    if showPatient {
+                        if let v = session.clinicalCase.vitals, !v.isEmpty { vitalsGrid(v) }
+                        caseMeta
+                    }
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(c.bullets, id: \.self) { b in
                             HStack(alignment: .top, spacing: 10) {
@@ -296,12 +328,72 @@ private struct InfoStep: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                        // Grouped findings (e.g. exam by system): a heading with
+                        // its findings beneath it.
+                        ForEach(c.groups) { g in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(g.system).font(CX.heading(17)).foregroundStyle(CX.navy)
+                                ForEach(g.findings, id: \.self) { f in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Circle().fill(CX.teal).frame(width: 6, height: 6)
+                                            .padding(.top, 7).padding(.leading, 8)
+                                        Text(f).font(CX.body(16)).foregroundStyle(CX.navy)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            MentorInsight(session: session, text: c.mentor)
+            if showsMentor(c) { MentorInsight(session: session, text: c.mentor) }
         }
         .padding(.horizontal, 18)
+    }
+
+    /// Mentor insight is offered only on the History and Physical Examination
+    /// pages (and only when that page actually has a hint).
+    private func showsMentor(_ c: InfoCard) -> Bool {
+        let t = c.title.lowercased()
+        let historyOrExam = t.contains("history") || t.contains("hx") || t.contains("exam")
+        return historyOrExam && !c.mentor.trimmed.isEmpty
+    }
+
+    /// Authored context for the encounter — only the parts the case declares.
+    @ViewBuilder private var caseMeta: some View {
+        let c = session.clinicalCase
+        let rows: [(String, String)] = [
+            ("Setting", c.setting ?? ""), ("Occupation", c.occupation ?? ""),
+            ("Duration", c.duration ?? ""), ("Guidelines", c.guidelineFocus ?? ""),
+        ].filter { !$0.1.trimmed.isEmpty }
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(rows, id: \.0) { label, value in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(label.uppercased()).font(CX.label(10)).foregroundStyle(CX.navySoft)
+                            .frame(width: 78, alignment: .leading)
+                        Text(value).font(CX.body(14)).foregroundStyle(CX.navy)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The presenting vitals, two rows of chips under the patient strip.
+    private func vitalsGrid(_ v: Vitals) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(v.pairs, id: \.0) { label, value in
+                VStack(spacing: 2) {
+                    Text(label).font(CX.label(10)).foregroundStyle(CX.navySoft)
+                    Text(value).font(CX.body(13)).foregroundStyle(CX.navy)
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 8).padding(.horizontal, 4)
+                .background(CX.orangeSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
     }
 
     private func patientStat(_ icon: String, _ label: String, _ value: String) -> some View {
@@ -335,7 +427,6 @@ private struct TestsStep: View {
         VStack(spacing: 12) {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
-                    MentorInsight(session: session, text: "Start with quick, high-yield tests — and skip the ones that won't change your plan.")
                     tray
                     ForEach(grouped, id: \.category) { group in
                         VStack(alignment: .leading, spacing: 10) {
@@ -449,6 +540,25 @@ private struct ResultsStep: View {
     @State private var page = 0
     // Only the investigations the user actually ordered — no auto-fill.
     var ordered: [TestOption] { session.tray }
+
+    /// A test's result image, if it has one. Loads async; a failure or an empty
+    /// URL simply leaves the card text-only.
+    @ViewBuilder private func resultImage(_ urlString: String) -> some View {
+        if let url = URL(string: urlString.trimmed), !urlString.trimmed.isEmpty {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                case .empty:
+                    ProgressView().tint(CX.teal).frame(height: 80)
+                default:
+                    EmptyView()   // failed to load — fall back to text only
+                }
+            }
+            .padding(.top, 12)
+        }
+    }
     var body: some View {
         VStack(spacing: 14) {
             HStack {
@@ -480,8 +590,10 @@ private struct ResultsStep: View {
                                 Text(ordered[i].name).font(CX.heading(18)).foregroundStyle(CX.teal)
                                 Text(ordered[i].result).font(CX.title(24)).foregroundStyle(CX.navy)
                                     .multilineTextAlignment(.center)
+                                // Optional result image (ECG strip, X-ray, …). A
+                                // failed load falls back to the text-only card.
+                                resultImage(ordered[i].imageURL)
                                 Spacer()
-                                MentorInsight(session: session, text: ordered[i].mentor)
                             }.frame(maxWidth: .infinity, minHeight: 320)
                         }.padding(.horizontal, 20).tag(i)
                     }
@@ -511,7 +623,6 @@ private struct DiagnosisStep: View {
         VStack(spacing: 14) {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 14) {
-                    MentorInsight(session: session, text: "Weigh every clue together — which single diagnosis explains all of them?")
                     HStack {
                         Image(systemName: "lightbulb.fill").foregroundStyle(CX.gold)
                         Text("1 correct option").font(CX.body(15)).foregroundStyle(CX.navySoft)
@@ -564,11 +675,44 @@ private struct DiagnosisStep: View {
 private struct TreatmentStep: View {
     @ObservedObject var session: CaseSession
     var onNext: () -> Void
+
+    /// Treatments bucketed under their category, in first-appearance order —
+    /// the same shape the Tests step uses.
+    private var grouped: [(category: String, items: [TreatmentOption])] {
+        var order: [String] = []
+        var map: [String: [TreatmentOption]] = [:]
+        for t in session.clinicalCase.treatments {
+            if map[t.category] == nil { order.append(t.category) }
+            map[t.category, default: []].append(t)
+        }
+        return order.map { ($0, map[$0]!) }
+    }
+
+    private func treatmentRow(_ t: TreatmentOption) -> some View {
+        let added = session.treatmentTray.contains(t)
+        return HStack {
+            Text(t.name).font(CX.body(16)).foregroundStyle(CX.navy)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button(added ? "Remove" : "Add") {
+                withAnimation {
+                    if added { session.treatmentTray.removeAll { $0 == t } }
+                    else { session.treatmentTray.append(t) }
+                }
+            }
+            .font(CX.label(14)).foregroundStyle(added ? CX.navySoft : .white)
+            .padding(.horizontal, 16).padding(.vertical, 9)
+            .background(added ? AnyShapeStyle(CX.hairline) : AnyShapeStyle(CX.orangeButton), in: Capsule())
+        }
+        .padding(14)
+        .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 14) {
-                    MentorInsight(session: session, text: "Treat the cause first, then support the patient — avoid interventions that add no value.")
+                VStack(spacing: 16) {
                     VStack(spacing: 8) {
                         Text("TREATMENT TRAY").font(CX.label(13)).foregroundStyle(CX.orange)
                         if session.treatmentTray.isEmpty {
@@ -589,25 +733,17 @@ private struct TreatmentStep: View {
                     .padding(14).frame(maxWidth: .infinity)
                     .background(CX.orangeSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-                    ForEach(session.clinicalCase.treatments) { t in
-                        let added = session.treatmentTray.contains(t)
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.category).font(CX.label(11)).foregroundStyle(CX.teal)
-                                Text(t.name).font(CX.body(16)).foregroundStyle(CX.navy)
+                    ForEach(grouped, id: \.category) { group in
+                        VStack(alignment: .leading, spacing: 10) {
+                            if !group.category.trimmed.isEmpty {
+                                HStack(spacing: 8) {
+                                    Text("💊").font(.system(size: 20))
+                                    Text(group.category).font(CX.heading(17)).foregroundStyle(CX.navy)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
-                            Spacer()
-                            Button(added ? "Remove" : "Add") {
-                                if added { session.treatmentTray.removeAll { $0 == t } }
-                                else { session.treatmentTray.append(t) }
-                            }
-                            .font(CX.label(14)).foregroundStyle(added ? CX.navySoft : .white)
-                            .padding(.horizontal, 16).padding(.vertical, 9)
-                            .background(added ? AnyShapeStyle(CX.hairline) : AnyShapeStyle(CX.orangeButton), in: Capsule())
+                            ForEach(group.items) { t in treatmentRow(t) }
                         }
-                        .padding(14)
-                        .background(CX.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(CX.hairline, lineWidth: 1.5))
                     }
                 }
                 .padding(.horizontal, 18).padding(.bottom, 8)
@@ -635,22 +771,107 @@ private struct OutcomeStep: View {
     /// still use `session.diagnosisCorrect`.
     private var correct: Bool { session.solved }
 
-    /// Mapped (icon, color, title, body) learning sections from the case's
-    /// structured mentor insight, in the video's display order.
-    private var learningSections: [(icon: String, color: Color, title: String, body: String)] {
+    /// Learning sections from the case's structured mentor insight, in the
+    /// video's display order. Tests and treatments are shown as option buttons
+    /// bucketed by how the player did — each opens its authored rationale.
+    private var learningSections: [LearnSection] {
         guard let mi = session.clinicalCase.mentorInsight else { return [] }
-        var out: [(String, Color, String, String)] = []
-        func add(_ icon: String, _ color: Color, _ title: String, _ text: String) {
-            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { out.append((icon, color, title, text)) }
+        var out: [LearnSection] = []
+        func prose(_ icon: String, _ color: Color, _ title: String, _ text: String) {
+            if !text.trimmed.isEmpty {
+                out.append(LearnSection(icon: icon, color: color, title: title, body: .prose(text)))
+            }
         }
-        add("brain.head.profile", CX.teal, "Core Clinical Insights", mi.reasoning)
-        add("list.bullet.rectangle.fill", CX.orange, "Why Other Diagnoses Didn't Fit", mi.differentials)
-        add("syringe.fill", CX.gold, "Test Selection Rationale", mi.testRationale)
-        add("pills.fill", CX.teal, "Treatment Priorities & Sequencing", mi.treatmentSequencing)
-        add("sparkles", CX.gold, "Clinical Pearls", mi.pearls)
-        add("exclamationmark.triangle.fill", CX.orange, "Clinical Traps to Avoid", mi.pitfalls)
-        add("graduationcap.fill", CX.teal, "Learning Points", mi.learningPoints)
+        func options(_ icon: String, _ color: Color, _ title: String, _ groups: [PillGroup]) {
+            if groups.contains(where: { !$0.pills.isEmpty }) {
+                out.append(LearnSection(icon: icon, color: color, title: title, body: .options(groups)))
+            }
+        }
+        func pills(_ icon: String, _ color: Color, _ title: String, _ pills: [OptionPill]) {
+            if !pills.isEmpty {
+                out.append(LearnSection(icon: icon, color: color, title: title, body: .pills(pills)))
+            }
+        }
+        prose("brain.head.profile", CX.teal, "Core Clinical Insights", mi.reasoning)
+        pills("list.bullet.rectangle.fill", CX.orange, "Why Other Diagnoses Didn't Fit", diagnosisPills)
+        options("syringe.fill", CX.gold, "Test Selection Rationale", testGroups)
+        options("pills.fill", CX.teal, "Treatment Priorities & Sequencing", treatmentGroups)
+        // Titled pearls are buttons; a pearls blob authored before they had
+        // titles has nothing to label a button with, so it stays prose.
+        if mi.pearls.allSatisfy({ !$0.title.trimmed.isEmpty }) {
+            pills("sparkles", CX.gold, "Clinical Pearls", pearlPills)
+        } else {
+            prose("sparkles", CX.gold, "Clinical Pearls", mi.pearlsText)
+        }
         return out
+    }
+
+    /// Each pearl as a button opening its note.
+    private var pearlPills: [OptionPill] {
+        (session.clinicalCase.mentorInsight?.pearls ?? []).map {
+            OptionPill(name: $0.title, rationale: $0.body, tag: "", kind: .pearl)
+        }
+    }
+
+    /// Every diagnosis the player could have chosen: the right answer first in
+    /// teal, the player's own wrong pick in red, the rest neutral. Each opens the
+    /// reasoning authored for it.
+    private var diagnosisPills: [OptionPill] {
+        let all = session.clinicalCase.diagnoses
+        let pickedID = session.pickedDiagnosis?.id
+        let ordered = all.filter(\.correct) + all.filter { !$0.correct }
+        return ordered.map { d in
+            let kind: PillKind = d.correct ? .correct : (d.id == pickedID ? .incorrect : .other)
+            return OptionPill(name: d.name, rationale: d.rationale, tag: d.tag, kind: kind)
+        }
+    }
+
+    /// Every test in the case, bucketed by what the player did with it: ordered
+    /// and high-yield, recommended but missed, ordered and low-yield, and the
+    /// rest they left alone.
+    private var testGroups: [PillGroup] {
+        let all = session.clinicalCase.tests
+        let picked = Set(session.tray.map(\.id))
+        func pills(_ kind: PillKind, _ tests: [TestOption]) -> [OptionPill] {
+            tests.map { OptionPill(name: $0.name, rationale: $0.rationale, tag: $0.tag, kind: kind) }
+        }
+        return [
+            PillGroup(kind: .correct, title: "Correctly Selected",
+                      empty: "No recommended investigations ordered.",
+                      pills: pills(.correct, session.tray.filter(\.helpful))),
+            PillGroup(kind: .missed, title: "Missed Investigations",
+                      message: "You did not select these recommended investigations.",
+                      pills: pills(.missed, all.filter { $0.helpful && !picked.contains($0.id) })),
+            PillGroup(kind: .incorrect, title: "Incorrectly Selected",
+                      message: "These investigations were unnecessary or incorrect for this case.",
+                      pills: pills(.incorrect, session.tray.filter { !$0.helpful })),
+            PillGroup(kind: .other, title: "Other",
+                      message: "The remaining investigations you could have ordered.",
+                      pills: pills(.other, all.filter { !$0.helpful && !picked.contains($0.id) })),
+        ]
+    }
+
+    /// The same four buckets for treatments.
+    private var treatmentGroups: [PillGroup] {
+        let all = session.clinicalCase.treatments
+        let picked = Set(session.treatmentTray.map(\.id))
+        func pills(_ kind: PillKind, _ treatments: [TreatmentOption]) -> [OptionPill] {
+            treatments.map { OptionPill(name: $0.name, rationale: $0.rationale, tag: $0.tag, kind: kind) }
+        }
+        return [
+            PillGroup(kind: .correct, title: "Correctly Selected",
+                      empty: "No recommended treatments selected.",
+                      pills: pills(.correct, session.treatmentTray.filter(\.appropriate))),
+            PillGroup(kind: .missed, title: "Missed Treatments",
+                      message: "You did not select these recommended treatments.",
+                      pills: pills(.missed, all.filter { $0.appropriate && !picked.contains($0.id) })),
+            PillGroup(kind: .incorrect, title: "Incorrectly Selected",
+                      message: "These treatments were unnecessary or incorrect for this case.",
+                      pills: pills(.incorrect, session.treatmentTray.filter { !$0.appropriate })),
+            PillGroup(kind: .other, title: "Other",
+                      message: "The remaining treatments you could have started.",
+                      pills: pills(.other, all.filter { !$0.appropriate && !picked.contains($0.id) })),
+        ]
     }
 
     private var challengeText: String {
@@ -787,8 +1008,8 @@ private struct OutcomeStep: View {
                 // the full teaching; free players see it locked (no coin unlock).
                 if !learningSections.isEmpty {
                     if app.isPro {
-                        ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
-                            CollapsibleInsight(icon: sec.icon, color: sec.color, title: sec.title, text: sec.body)
+                        ForEach(learningSections) { sec in
+                            CollapsibleInsight(section: sec)
                         }
                     } else {
                         proLockedBreakdown
@@ -855,7 +1076,7 @@ private struct OutcomeStep: View {
     /// Locked teaser for the structured breakdown, unlocked with coins. Lists
     /// every insight tile (Core Clinical Insights, Why Other Diagnoses Didn't
     /// Fit, Test Selection Rationale, Treatment Priorities & Sequencing, Clinical
-    /// Traps, Learning Points, …) so free users can see what unlocking reveals.
+    /// Pearls) so free users can see what unlocking reveals.
     private var proLockedBreakdown: some View {
         CXCard(borderColor: CX.teal.opacity(0.5)) {
             VStack(alignment: .leading, spacing: 12) {
@@ -866,9 +1087,9 @@ private struct OutcomeStep: View {
                     Image(systemName: "lock.fill").foregroundStyle(CX.navySoft)
                 }
                 Text("A Pro feature").font(CX.title(20)).foregroundStyle(CX.orange)
-                Text("Unlock the expert breakdown for every case — the reasoning, pitfalls and pearls behind the answer.")
+                Text("Unlock the expert breakdown for every case — the reasoning, rationale and pearls behind the answer.")
                     .font(CX.body(14)).foregroundStyle(CX.navySoft).fixedSize(horizontal: false, vertical: true)
-                ForEach(Array(learningSections.enumerated()), id: \.offset) { _, sec in
+                ForEach(learningSections) { sec in
                     HStack(spacing: 8) {
                         Image(systemName: sec.icon).foregroundStyle(sec.color.opacity(0.6))
                         Text(sec.title).font(CX.body(15)).foregroundStyle(CX.navySoft)
@@ -890,21 +1111,105 @@ private struct OutcomeStep: View {
     }
 }
 
-/// An expandable insight card used on the outcome screen (shown once unlocked).
-private struct CollapsibleInsight: View {
+/// One teaching section on the outcome screen: either authored prose, or the
+/// case's options bucketed by how the player did.
+private struct LearnSection: Identifiable {
     let icon: String
     let color: Color
     let title: String
-    let text: String
+    let body: Body
+    var id: String { title }
+
+    enum Body {
+        case prose(String)
+        /// Options bucketed under headings (tests, treatments).
+        case options([PillGroup])
+        /// A flat list of options, each carrying its own colour (diagnoses).
+        case pills([OptionPill])
+    }
+}
+
+/// A tappable option button; tapping opens the rationale authored for it,
+/// headed by its tag (e.g. "COPD/Emphysema Distractor") when there is one.
+private struct OptionPill: Identifiable {
+    let id = UUID()
+    let name: String
+    let rationale: String
+    let tag: String
+    var kind: PillKind = .other
+}
+
+/// One feedback bucket of option buttons.
+private struct PillGroup: Identifiable {
+    let kind: PillKind
+    let title: String
+    var message: String? = nil
+    /// Shown in place of the buttons when the bucket is empty. A bucket with no
+    /// `empty` text is simply left out when it has nothing in it.
+    var empty: String? = nil
+    let pills: [OptionPill]
+    var id: String { title }
+}
+
+/// Visual style per bucket. "Other" is the options the player left alone and
+/// that weren't recommended either — neutral slate, not a verdict. Pearls aren't
+/// a verdict either: they take the section's own gold.
+private enum PillKind {
+    case correct, missed, incorrect, other, pearl
+
+    var color: Color {
+        switch self {
+        case .correct:   return CX.teal
+        case .missed:    return CX.orange
+        case .incorrect: return CX.red
+        case .other:     return CX.slate
+        case .pearl:     return CX.gold
+        }
+    }
+    var icon: String {
+        switch self {
+        case .correct:   return "checkmark.circle.fill"
+        case .missed:    return "exclamationmark.circle.fill"
+        case .incorrect: return "xmark.circle.fill"
+        case .other:     return "ellipsis.circle.fill"
+        case .pearl:     return "sparkles"
+        }
+    }
+}
+
+/// Authored prose with each line's leading "Label:" in bold — the labels the
+/// author writes to open a point ("The Game Trap: …"). Lines without one are
+/// left exactly as written.
+private func labelledText(_ text: String, size: CGFloat, color: Color) -> Text {
+    var out = AttributedString()
+    let lines = text.components(separatedBy: "\n")
+    for (i, line) in lines.enumerated() {
+        if let p = line.labelledParts {
+            var label = AttributedString(p.label + ": ")
+            label.font = CX.heading(size)
+            out += label
+            out += AttributedString(p.rest)
+        } else {
+            out += AttributedString(line)
+        }
+        if i < lines.count - 1 { out += AttributedString("\n") }
+    }
+    out.foregroundColor = color
+    return Text(out).font(CX.body(size))
+}
+
+/// An expandable insight card used on the outcome screen (shown once unlocked).
+private struct CollapsibleInsight: View {
+    let section: LearnSection
     @State private var open = false
 
     var body: some View {
-        CXCard(borderColor: color.opacity(0.5)) {
+        CXCard(borderColor: section.color.opacity(0.5)) {
             VStack(alignment: .leading, spacing: 10) {
                 Button { withAnimation(.easeInOut(duration: 0.2)) { open.toggle() } } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: icon).foregroundStyle(color)
-                        Text(title).font(CX.heading(16)).foregroundStyle(CX.navy)
+                        Image(systemName: section.icon).foregroundStyle(section.color)
+                        Text(section.title).font(CX.heading(16)).foregroundStyle(CX.navy)
                             .multilineTextAlignment(.leading)
                         Spacer()
                         Image(systemName: open ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
@@ -912,11 +1217,148 @@ private struct CollapsibleInsight: View {
                     }
                 }
                 if open {
-                    Text(text).font(CX.body(15)).foregroundStyle(CX.navySoft)
-                        .fixedSize(horizontal: false, vertical: true)
+                    switch section.body {
+                    case .prose(let text):
+                        labelledText(text, size: 15, color: CX.navySoft)
+                            .fixedSize(horizontal: false, vertical: true)
+                    case .options(let groups):
+                        VStack(alignment: .leading, spacing: 16) {
+                            ForEach(groups.filter { !$0.pills.isEmpty || $0.empty != nil }) { group in
+                                PillGroupView(group: group)
+                            }
+                        }
+                    case .pills(let pills):
+                        // Same 8pt gap the bucketed sections use between buttons.
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(pills) { OptionPillButton(pill: $0) }
+                        }
+                    }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// A bucket heading, its explanation, and its option buttons.
+private struct PillGroupView: View {
+    let group: PillGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: group.kind.icon).foregroundStyle(group.kind.color)
+                Text(group.title).font(CX.heading(16)).foregroundStyle(group.kind.color)
+            }
+            if group.pills.isEmpty {
+                if let empty = group.empty {
+                    Text(empty).font(CX.body(14)).foregroundStyle(CX.navySoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                if let message = group.message {
+                    Text(message).font(CX.body(13)).foregroundStyle(CX.navySoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(group.pills) { pill in
+                    OptionPillButton(pill: pill)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A rounded option button that opens its rationale in a message bubble. With no
+/// rationale authored there's nothing to reveal, so the button doesn't tap.
+private struct OptionPillButton: View {
+    let pill: OptionPill
+    @State private var open = false
+
+    private var kind: PillKind { pill.kind }
+    private var hasRationale: Bool { !pill.rationale.trimmed.isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                guard hasRationale else { return }
+                withAnimation(.easeInOut(duration: 0.2)) { open.toggle() }
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(pill.name).font(CX.heading(15)).foregroundStyle(CX.navy)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    if hasRationale {
+                        Image(systemName: open ? "chevron.up" : "info.circle")
+                            .font(.system(size: 14)).foregroundStyle(kind.color)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(kind.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(kind.color.opacity(0.45), lineWidth: 1.5))
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasRationale)
+            if open {
+                RationaleBubble(color: kind.color, heading: pill.tag, text: pill.rationale)
+                    .padding(.leading, 14)
+            }
+        }
+    }
+}
+
+/// Tinted speech bubble, tail pointing up at the button that opened it.
+private struct RationaleBubble: View {
+    let color: Color
+    var heading: String = ""
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !heading.trimmed.isEmpty {
+                Text(heading.uppercased()).font(CX.label(11)).foregroundStyle(color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            labelledText(text, size: 14, color: CX.navy)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(color.opacity(0.45), lineWidth: 1.5))
+            .overlay(alignment: .topLeading) { tail.offset(x: 14, y: -7) }
+    }
+
+    /// Filled over the card, then tinted, so the tail matches the bubble exactly
+    /// and masks the length of border it sits on.
+    private var tail: some View {
+        BubbleTail().fill(CX.card)
+            .overlay(BubbleTail().fill(color.opacity(0.10)))
+            .overlay(BubbleTailEdges().stroke(color.opacity(0.45), lineWidth: 1.5))
+            .frame(width: 16, height: 8)
+    }
+}
+
+private struct BubbleTail: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.midX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Only the two slanted edges — the base is the bubble's own border line.
+private struct BubbleTailEdges: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.midX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        return p
     }
 }
 

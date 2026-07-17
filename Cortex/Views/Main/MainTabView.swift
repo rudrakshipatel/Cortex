@@ -61,10 +61,12 @@ struct TopBar: View {
             Button { showStreak = true } label: {
                 resource("flame.fill", "\(app.streak)", .orange)
             }
+            // Subscribers get a gold "PRO" badge instead of the teal upsell; still
+            // tappable — it opens the sheet to manage the subscription.
             Button { showPro = true } label: {
-                Text("GO PRO").font(CX.label(14)).foregroundStyle(.white)
+                Text(app.isPro ? "PRO" : "GO PRO").font(CX.label(14)).foregroundStyle(.white)
                     .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(CX.tealButton, in: Capsule())
+                    .background(app.isPro ? CX.goldButton : CX.tealButton, in: Capsule())
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
@@ -89,13 +91,14 @@ struct TopBar: View {
 
 // MARK: - Energy bar (replaces the old "lives" counter)
 struct EnergyBar: View {
-    let value: Int
-    let max: Int
+    /// Energy is fractional (Pro cases cost 8.5); the bar shows it rounded.
+    let value: Double
+    let max: Double
     /// Optional explicit bar width; nil = compact (top bar).
     var width: CGFloat = 54
     var showsLabel = true
 
-    private var frac: Double { Swift.min(1, Swift.max(0, Double(value) / Double(Swift.max(max, 1)))) }
+    private var frac: Double { Swift.min(1, Swift.max(0, value / Swift.max(max, 1))) }
     private var fill: Color { frac > 0.5 ? .green : (frac > 0.2 ? CX.orange : .red) }
 
     var body: some View {
@@ -106,7 +109,7 @@ struct EnergyBar: View {
                 Capsule().fill(fill).frame(width: width * frac, height: 9)
             }
             if showsLabel {
-                Text("\(value)").font(CX.label(13)).foregroundStyle(CX.navy).monospacedDigit()
+                Text("\(Int(value.rounded()))").font(CX.label(13)).foregroundStyle(CX.navy).monospacedDigit()
             }
         }
         .padding(.horizontal, 11).padding(.vertical, 8)
@@ -136,7 +139,7 @@ struct GoProSheet: View {
                     CXCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Cortex Pro unlocks:").font(CX.heading(17)).foregroundStyle(CX.teal)
-                            proRow("Cases cost far less energy (12 vs 50)")
+                            proRow("Cases cost far less energy (\(AppState.energyText(AppState.proCaseEnergyCost)) vs \(AppState.energyText(AppState.randomCaseEnergyCost)))")
                             proRow("Advanced & senior-level cases")
                             proRow("High-complexity, multi-morbidity patients")
                             proRow("Full mentor reasoning on every case")

@@ -1,7 +1,11 @@
 import SwiftUI
 import AVFoundation
 
-/// Reads case content aloud via the system text-to-speech engine.
+/// Reads case content aloud via the system text-to-speech engine. Main-actor
+/// isolated: `speaking` drives SwiftUI, and the synthesiser is only touched from
+/// there. AVFoundation's delegate callbacks arrive off the main actor, so they
+/// stay nonisolated and hop back.
+@MainActor
 final class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     static let shared = SpeechManager()
 
@@ -41,10 +45,10 @@ final class SpeechManager: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
 
     // MARK: AVSpeechSynthesizerDelegate
-    func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
-        DispatchQueue.main.async { self.speaking = false }
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
+        Task { @MainActor in self.speaking = false }
     }
-    func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
-        DispatchQueue.main.async { self.speaking = false }
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
+        Task { @MainActor in self.speaking = false }
     }
 }

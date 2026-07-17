@@ -183,6 +183,15 @@ struct CaseDoubtChat: View {
         }
     }
 
+    /// "Heading:" followed by one "Name (tag): why" line per option that has a
+    /// rationale authored. Empty when none do.
+    private static func optionNotes(_ heading: String, _ options: [(String, String, String)]) -> [String] {
+        let notes = options.filter { !$0.2.trimmed.isEmpty }.map { name, tag, why in
+            "  \(name)\(tag.trimmed.isEmpty ? "" : " (\(tag))"): \(why)"
+        }
+        return notes.isEmpty ? [] : ["\(heading):"] + notes
+    }
+
     /// A compact, self-contained description of the finished case for the tutor.
     static func caseContext(_ c: ClinicalCase) -> String {
         var lines: [String] = []
@@ -190,8 +199,11 @@ struct CaseDoubtChat: View {
         lines.append("Specialty: \(c.specialty)")
         lines.append("Patient: \(c.patientName), \(c.age), \(c.gender)")
         lines.append("Chief complaint: \(c.chiefComplaint)")
-        for card in c.infoCards where !card.bullets.isEmpty {
-            lines.append("\(card.title): " + card.bullets.joined(separator: "; "))
+        for card in c.infoCards {
+            // Sections are authored as flat bullets, grouped findings, or both.
+            var parts = card.bullets
+            parts += card.groups.map { "\($0.system): " + $0.findings.joined(separator: "; ") }
+            if !parts.isEmpty { lines.append("\(card.title): " + parts.joined(separator: "; ")) }
         }
         if !c.tests.isEmpty {
             let t = c.tests.map { "\($0.name) → \($0.result)\($0.helpful ? " (key)" : "")" }.joined(separator: "; ")
@@ -204,6 +216,14 @@ struct CaseDoubtChat: View {
         if !otherDx.isEmpty { lines.append("Other options considered: \(otherDx.joined(separator: ", "))") }
         let goodTx = c.treatments.filter { $0.appropriate }.map(\.name)
         if !goodTx.isEmpty { lines.append("Appropriate treatments: \(goodTx.joined(separator: ", "))") }
+        // The teaching now lives on each option, so hand the tutor those notes —
+        // they're what the answer screen shows behind every button.
+        lines.append(contentsOf: optionNotes("Why each diagnosis did or didn't fit",
+                                             c.diagnoses.map { ($0.name, $0.tag, $0.rationale) }))
+        lines.append(contentsOf: optionNotes("Test selection rationale",
+                                             c.tests.map { ($0.name, $0.tag, $0.rationale) }))
+        lines.append(contentsOf: optionNotes("Treatment rationale",
+                                             c.treatments.map { ($0.name, $0.tag, $0.rationale) }))
         if let mi = c.mentorInsight, !mi.isEmpty {
             for (title, body) in mi.sections { lines.append("\(title): \(body)") }
         }

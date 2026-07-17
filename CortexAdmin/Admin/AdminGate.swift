@@ -129,7 +129,10 @@ private struct AdminGate: View {
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     enum Stage { case create, confirm, enter }
-    private let pinLength = 4
+    /// PINs are 4–8 digits. Variable length means there's no length to submit on,
+    /// so entry is confirmed with the button under the pad.
+    private let minLength = 4
+    private let maxLength = 8
 
     var body: some View {
         AppBackground {
@@ -158,9 +161,12 @@ private struct AdminGate: View {
 
                 Spacer()
                 PINPad { digit in append(digit) } onDelete: { backspace() }
-                    .padding(.bottom, 12)
                     .disabled(lockRemaining > 0)
                     .opacity(lockRemaining > 0 ? 0.4 : 1)
+                CXButton(title: submitTitle) { submit() }
+                    .opacity(canSubmit ? 1 : 0.5)
+                    .disabled(!canSubmit)
+                    .padding(.horizontal, 40).padding(.top, 14).padding(.bottom, 12)
             }
             .padding(.horizontal, 22).padding(.vertical, 16)
         }
@@ -174,30 +180,40 @@ private struct AdminGate: View {
         case .enter:   return "Admin Access"
         }
     }
+    private var canSubmit: Bool { lockRemaining == 0 && entry.count >= minLength }
+    private var submitTitle: String {
+        switch stage {
+        case .create:  return "Set PIN"
+        case .confirm: return "Confirm PIN"
+        case .enter:   return "Unlock"
+        }
+    }
     private var subtitle: String {
         switch stage {
-        case .create:  return "Set a \(pinLength)-digit PIN. Only you will use this to upload content."
+        case .create:  return "Set a \(minLength)–\(maxLength) digit PIN. Only you will use this to upload content."
         case .confirm: return "Re-enter your PIN to confirm."
         case .enter:   return "Enter your PIN to manage questions."
         }
     }
 
+    /// One dot per digit typed, with empty slots up to the 4-digit minimum, so
+    /// the row grows as a longer PIN is entered.
     private var dots: some View {
         HStack(spacing: 18) {
-            ForEach(0..<pinLength, id: \.self) { i in
+            ForEach(0..<max(minLength, entry.count), id: \.self) { i in
                 Circle()
                     .fill(i < entry.count ? CX.teal : Color.clear)
                     .frame(width: 16, height: 16)
                     .overlay(Circle().stroke(CX.teal, lineWidth: 2))
             }
         }
+        .animation(.easeInOut(duration: 0.15), value: entry.count)
     }
 
     private func append(_ d: String) {
-        guard lockRemaining == 0, entry.count < pinLength else { return }
+        guard lockRemaining == 0, entry.count < maxLength else { return }
         error = nil
         entry += d
-        if entry.count == pinLength { submit() }
     }
     private func backspace() { if !entry.isEmpty { entry.removeLast() } }
 

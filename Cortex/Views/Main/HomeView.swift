@@ -67,7 +67,7 @@ struct HomeView: View {
             })
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost). Daily and Emergency cases are always free.")
+            Text("Each case costs \(AppState.energyText(AppState.randomCaseEnergyCost)) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.energyText(AppState.proCaseEnergyCost)). Daily and Emergency cases are always free.")
         }
         .onReceive(ticker) { t in
             now = t
@@ -213,6 +213,21 @@ struct PracticeView: View {
     @EnvironmentObject var store: ContentStore
     @State private var active: ClinicalCase?
     @State private var showNoLife = false
+    /// The case each specialty is currently offering: a random one the player
+    /// hasn't solved. Held in state so the card doesn't re-roll as it redraws;
+    /// re-rolled once the offered case is solved.
+    @State private var picks: [String: UUID] = [:]
+
+    /// The case collection as specialty buckets, in first-appearance order.
+    private var specialties: [(name: String, cases: [ClinicalCase])] {
+        var order: [String] = []
+        var byName: [String: [ClinicalCase]] = [:]
+        for c in store.clinicalCases {
+            if byName[c.specialty] == nil { order.append(c.specialty) }
+            byName[c.specialty, default: []].append(c)
+        }
+        return order.map { (name: $0, cases: byName[$0] ?? []) }
+    }
 
     var body: some View {
         AppBackground {
@@ -228,10 +243,12 @@ struct PracticeView: View {
                             EmptyStateCard(title: "No clinical cases yet",
                                            body: "The permanent case collection appears here to browse and solve anytime.")
                         } else {
-                            ForEach(store.clinicalCases) { c in
-                                DepartmentCard(dept: caseDept(c, "🩺"), solved: app.isCaseSolved(c.id),
-                                               trophy: app.caseTrophyTier(c.id),
-                                               masterySolved: app.solvedCount(in: c.specialty)) { launch(c) }
+                            ForEach(specialties, id: \.name) { sp in
+                                if let next = offered(sp) {
+                                    DepartmentCard(dept: caseDept(next, "🩺"),
+                                                   allSolved: allSolved(sp),
+                                                   masterySolved: app.solvedCount(in: sp.name)) { launch(next) }
+                                }
                             }
                         }
                     }
@@ -239,11 +256,42 @@ struct PracticeView: View {
                 }
             }
         }
-        .fullScreenCover(item: $active) { c in CaseFlow(clinicalCase: c) }
+        // Re-roll on the way back so a case that was just solved isn't offered again.
+        .fullScreenCover(item: $active, onDismiss: { roll() }) { c in CaseFlow(clinicalCase: c) }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost).")
+            Text("Each case costs \(AppState.energyText(AppState.randomCaseEnergyCost)) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.energyText(AppState.proCaseEnergyCost)).")
         }
-        .onAppear { app.refreshForNewDay() }
+        .onAppear { app.refreshForNewDay(); roll() }
+    }
+
+    private func allSolved(_ sp: (name: String, cases: [ClinicalCase])) -> Bool {
+        !sp.cases.isEmpty && sp.cases.allSatisfy { app.isCaseSolved($0.id) }
+    }
+
+    /// What a specialty can offer: the cases still unsolved, or — once they're
+    /// all solved — any of them, to practise again.
+    private func pool(_ sp: (name: String, cases: [ClinicalCase])) -> [ClinicalCase] {
+        let unsolved = sp.cases.filter { !app.isCaseSolved($0.id) }
+        return unsolved.isEmpty ? sp.cases : unsolved
+    }
+
+    /// The case a specialty is showing: whatever was rolled for it, else the
+    /// first of its pool until `roll()` runs.
+    private func offered(_ sp: (name: String, cases: [ClinicalCase])) -> ClinicalCase? {
+        if let id = picks[sp.name], let c = sp.cases.first(where: { $0.id == id }), pool(sp).contains(where: { $0.id == id }) {
+            return c
+        }
+        return pool(sp).first
+    }
+
+    /// Give each specialty a random case from its pool, keeping any pick that's
+    /// still valid so cards don't shuffle underfoot.
+    private func roll() {
+        for sp in specialties {
+            let p = pool(sp)
+            if let id = picks[sp.name], p.contains(where: { $0.id == id }) { continue }
+            picks[sp.name] = p.randomElement()?.id
+        }
     }
 
     private func launch(_ c: ClinicalCase) {
@@ -279,8 +327,9 @@ struct EmptyStateCard: View {
 struct DepartmentCard: View {
     let dept: Department
     var solved: Bool = false
-    /// Trophy tier earned for this case (1 bronze, 2 silver, 3 gold), nil if unsolved.
-    var trophy: Int? = nil
+    /// Every case in this specialty is solved: the card says so, and playing it
+    /// replays one for practice.
+    var allSolved: Bool = false
     /// Cases solved in this specialty — drives the mastery progress chips.
     var masterySolved: Int = 0
     var onPlay: () -> Void
@@ -294,9 +343,13 @@ struct DepartmentCard: View {
                     HStack(spacing: 8) {
                         Text(dept.emoji).font(.system(size: 22))
                         Text(dept.name).font(CX.heading(21)).foregroundStyle(CX.navy)
-                        if solved {
+                        if solved || allSolved {
                             Image(systemName: "checkmark.seal.fill").font(.system(size: 16)).foregroundStyle(CX.teal)
                         }
+                    }
+                    if allSolved {
+                        Text("All solved · tap to practise again")
+                            .font(CX.label(12)).foregroundStyle(CX.teal)
                     }
                     Text(dept.teaser).font(CX.body(15)).foregroundStyle(CX.navySoft)
                         .fixedSize(horizontal: false, vertical: true)
@@ -313,6 +366,7 @@ struct DepartmentCard: View {
                 .buttonStyle(PressStyle())
             }
         }
+        .opacity(allSolved ? 0.88 : 1)
     }
 
     /// Three segmented mastery-trophy progress chips for this specialty.
@@ -422,7 +476,7 @@ struct LeaguesView: View {
             CaseFlow(clinicalCase: c, consumesLife: true)
         }
         .alert("Not enough Energy", isPresented: $showNoLife) { Button("OK") {} } message: {
-            Text("Each case costs \(AppState.randomCaseEnergyCost) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.proCaseEnergyCost).")
+            Text("Each case costs \(AppState.energyText(AppState.randomCaseEnergyCost)) energy, which refills over time (full in about a day). Go Pro and they cost only \(AppState.energyText(AppState.proCaseEnergyCost)).")
         }
         .sheet(isPresented: $showLearnMore) { LeagueInfoSheet() }
         .alert("Promoted! 🎉", isPresented: Binding(get: { promotion != nil }, set: { if !$0 { promotion = nil } })) {

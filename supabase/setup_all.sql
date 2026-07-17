@@ -230,7 +230,8 @@ alter table public.leaderboard enable row level security;
 -- Every statement is idempotent.
 --
 -- Why: the case payload contains the answer key (diagnoses[].correct,
--- tests[].helpful, treatments[].appropriate, and the outcome/mentor text). If
+-- tests[].helpful, treatments[].appropriate, their per-option rationale/tag,
+-- and the outcome/mentor text). If
 -- clients can read the table, they can read every answer. After this migration:
 --   • the content/emergencies tables are NOT readable by anon at all;
 --   • clients fetch questions through get_cases() / get_emergencies(), which
@@ -246,11 +247,11 @@ returns jsonb language sql immutable as $$
   select (p - 'outcomeTitle' - 'outcomeBody' - 'mentorInsight')
     || jsonb_build_object(
       'diagnoses', coalesce(
-        (select jsonb_agg(e - 'correct') from jsonb_array_elements(p->'diagnoses') e), '[]'::jsonb),
+        (select jsonb_agg(e - 'correct' - 'rationale' - 'tag') from jsonb_array_elements(p->'diagnoses') e), '[]'::jsonb),
       'tests', coalesce(
-        (select jsonb_agg(e - 'helpful') from jsonb_array_elements(p->'tests') e), '[]'::jsonb),
+        (select jsonb_agg(e - 'helpful' - 'rationale' - 'tag') from jsonb_array_elements(p->'tests') e), '[]'::jsonb),
       'treatments', coalesce(
-        (select jsonb_agg(e - 'appropriate') from jsonb_array_elements(p->'treatments') e), '[]'::jsonb)
+        (select jsonb_agg(e - 'appropriate' - 'rationale' - 'tag') from jsonb_array_elements(p->'treatments') e), '[]'::jsonb)
     );
 $$;
 
@@ -597,6 +598,32 @@ language sql stable security definer set search_path = public as $$
   where m.week = p_week;
 $$;
 grant execute on function public.get_league(int) to authenticated;
+
+-- ============================================================================
+-- Case images — the bucket a test's result image (ECG strip, X-ray, …) lives in.
+-- Public to read (players fetch it straight from the result card); only an admin
+-- may write, matching the content tables above.
+-- ============================================================================
+insert into storage.buckets (id, name, public)
+values ('case-images', 'case-images', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "case images are public" on storage.objects;
+create policy "case images are public"
+  on storage.objects for select
+  using (bucket_id = 'case-images');
+
+drop policy if exists "admins write case images" on storage.objects;
+create policy "admins write case images"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'case-images'
+              and exists (select 1 from public.admins a where a.id = auth.uid()));
+
+drop policy if exists "admins update case images" on storage.objects;
+create policy "admins update case images"
+  on storage.objects for update to authenticated
+  using (bucket_id = 'case-images'
+         and exists (select 1 from public.admins a where a.id = auth.uid()));
 
 notify pgrst, 'reload schema';
 

@@ -23,7 +23,9 @@ final class AppState: ObservableObject {
     /// unlock Mentor Insight.
     @Published var coins: Int       { didSet { defaults.set(coins, forKey: K.coins) } }
     /// Life is energy spent to play cases; it refills to `maxLife` at GMT 00:00.
-    @Published var life: Int        { didSet { defaults.set(life, forKey: K.life) } }
+    /// Fractional so Pro's 8.5-energy cases can be represented exactly (the
+    /// on-screen bar shows it rounded).
+    @Published var life: Double     { didSet { defaults.set(life, forKey: K.life) } }
     @Published var isPro: Bool = false
     /// Username shown on the profile and the global leaderboard.
     @Published var displayName: String { didSet { defaults.set(displayName, forKey: K.name) } }
@@ -32,11 +34,30 @@ final class AppState: ObservableObject {
     let playerId: String
 
     /// Full Life bar — restored every GMT day.
-    static let maxLife = 100
+    nonisolated static let maxLife = 100.0
 
     /// Country chosen during onboarding (persisted). Emergency timing uses the
     /// device's own timezone, which is more precise than country.
     @Published var country: String { didSet { defaults.set(country, forKey: K.country) } }
+
+    // MARK: Onboarding personalization (persisted)
+    /// What the user does — "Medical Student", "Resident", … Shown on the plan
+    /// summary and the profile.
+    @Published var position: String { didSet { defaults.set(position, forKey: K.position) } }
+    /// Self-rated clinical experience — "Just starting out" … "Seasoned".
+    @Published var experience: String { didSet { defaults.set(experience, forKey: K.experience) } }
+    /// Specialties the user said they're interested in.
+    @Published var specialtyInterests: [String] { didSet { defaults.set(specialtyInterests, forKey: K.interests) } }
+    /// What they're training for — "Pass my exams", …
+    @Published var trainingGoal: String { didSet { defaults.set(trainingGoal, forKey: K.goal) } }
+    /// Cases-a-day the user committed to during onboarding.
+    @Published var dailyGoalCases: Int { didSet { defaults.set(dailyGoalCases, forKey: K.dailyGoal) } }
+    /// An invite code entered during onboarding, redeemed once an account binds.
+    @Published var pendingInviteCode: String? { didSet { defaults.set(pendingInviteCode, forKey: K.invite) } }
+
+    /// Marks onboarding complete — the single call that swaps RootView over to
+    /// the main app.
+    func finishOnboarding() { onboarded = true }
 
     // MARK: Streak (GMT-day based, persisted)
     @Published private(set) var streak: Int            { didSet { defaults.set(streak, forKey: K.streak) } }
@@ -52,9 +73,7 @@ final class AppState: ObservableObject {
     @Published var pendingSetback: SetbackInfo? = nil
     /// The GMT day Life was last refilled — drives the daily reset.
     @Published private(set) var lastLifeDay: Int { didSet { defaults.set(lastLifeDay, forKey: K.lifeDay) } }
-    /// Timestamp from which energy has been regenerating (whole units only; the
-    /// sub-unit remainder is preserved by only advancing this clock by the units
-    /// actually granted).
+    /// Timestamp from which energy has been regenerating.
     private var lastEnergyDate: Date { didSet { defaults.set(lastEnergyDate.timeIntervalSince1970, forKey: K.energyDate) } }
     /// GMT days on which the user has already solved that day's Daily Case.
     @Published private(set) var solvedDailyDays: Set<Int> {
@@ -111,6 +130,9 @@ final class AppState: ObservableObject {
         static let freezes = "cx.streakFreezes", activeDays = "cx.activeDays", highStreak = "cx.highStreak"
         static let leagueTier = "cx.leagueTier", leagueResultWeek = "cx.leagueResultWeek"
         static let specialtySolved = "cx.specialtySolved"
+        static let position = "cx.position", experience = "cx.experience"
+        static let interests = "cx.specialties", goal = "cx.goal"
+        static let dailyGoal = "cx.dailyGoalCases", invite = "cx.pendingInviteCode"
     }
 
     init() {
@@ -125,7 +147,7 @@ final class AppState: ObservableObject {
         }
         lifetimeXP = d.object(forKey: K.xp)    as? Int ?? 0   // new users start at Level 1
         coins      = d.object(forKey: K.coins) as? Int ?? 500   // new users start with 500 free coins
-        life       = d.object(forKey: K.life)  as? Int ?? Self.maxLife
+        life       = d.object(forKey: K.life) != nil ? d.double(forKey: K.life) : Self.maxLife
         lastLifeDay = d.object(forKey: K.lifeDay) as? Int ?? Self.gmtDay()
         let storedEnergyTS = d.double(forKey: K.energyDate)   // 0 when unset
         lastEnergyDate = storedEnergyTS > 0 ? Date(timeIntervalSince1970: storedEnergyTS) : Date()
@@ -162,6 +184,12 @@ final class AppState: ObservableObject {
         bronze = d.object(forKey: K.bronze) as? Int ?? 0
         topThreeFinishes = d.object(forKey: K.topThree) as? Int ?? 0
         country = d.string(forKey: K.country) ?? ""
+        position = d.string(forKey: K.position) ?? ""
+        experience = d.string(forKey: K.experience) ?? ""
+        specialtyInterests = d.stringArray(forKey: K.interests) ?? []
+        trainingGoal = d.string(forKey: K.goal) ?? ""
+        dailyGoalCases = d.object(forKey: K.dailyGoal) as? Int ?? 5
+        pendingInviteCode = d.string(forKey: K.invite)
         leagueTier = d.object(forKey: K.leagueTier) as? Int ?? 0          // start in Bronze
         lastLeagueResultWeek = d.object(forKey: K.leagueResultWeek) as? Int ?? Self.gmtWeek()
         refreshForNewDay()
@@ -377,23 +405,18 @@ final class AppState: ObservableObject {
     /// Energy regenerated per minute — 0.0694444…/min = exactly 100 over 24 hours.
     static let energyRegenPerMinute = 100.0 / (24.0 * 60.0)
 
-    /// Grant whole energy units accrued since `lastEnergyDate`, capped at `maxLife`.
-    /// The clock advances only by the units actually granted, so the fractional
-    /// remainder carries over to the next call (no regen is lost to rounding).
+    /// Grant the energy accrued since `lastEnergyDate`, capped at `maxLife`.
+    /// Energy is fractional, so it accrues continuously (no whole-unit remainder
+    /// to carry) and the clock simply advances to now.
     func regenerateEnergy() {
         guard life < Self.maxLife else { lastEnergyDate = Date(); return }
         let now = Date()
         let minutes = now.timeIntervalSince(lastEnergyDate) / 60.0
         guard minutes > 0 else { return }
-        let gained = Int((minutes * Self.energyRegenPerMinute).rounded(.down))
+        let gained = minutes * Self.energyRegenPerMinute
         guard gained > 0 else { return }
         life = Swift.min(Self.maxLife, life + gained)
-        if life >= Self.maxLife {
-            lastEnergyDate = now
-        } else {
-            let secondsPerUnit = 60.0 / Self.energyRegenPerMinute
-            lastEnergyDate = lastEnergyDate.addingTimeInterval(Double(gained) * secondsPerUnit)
-        }
+        lastEnergyDate = now
     }
 
     // MARK: Daily Case
@@ -491,9 +514,9 @@ final class AppState: ObservableObject {
     }
 
     // MARK: Shop
-    static let streakFreezeCost = 1000       // per Streak Freeze
-    static let xpPackAmount = 50             // XP granted per XP pack
-    static let xpPackCost = 1000             // coin cost of one XP pack
+    nonisolated static let streakFreezeCost = 1000       // per Streak Freeze
+    nonisolated static let xpPackAmount = 50             // XP granted per XP pack
+    nonisolated static let xpPackCost = 1000             // coin cost of one XP pack
 
     /// Buy `count` Streak Freezes with coins. Returns false if too few coins.
     @discardableResult
@@ -527,16 +550,22 @@ final class AppState: ObservableObject {
         return Swift.min(maxEnergyCost, Swift.max(minEnergyCost, cost))
     }
 
-    /// Energy a random/practice case costs to play. Free players pay a flat 50
-    /// (~2 per full bar); Pro players pay only 12 (~8 per full bar).
-    static let randomCaseEnergyCost = 50
-    static let proCaseEnergyCost = 12
-    var randomCaseCost: Int { isPro ? Self.proCaseEnergyCost : Self.randomCaseEnergyCost }
+    /// Energy a random/practice/past case costs. Free players pay a flat 16.5
+    /// (~6 per full bar); Pro players pay only 8.5 (~12 per full bar).
+    static let randomCaseEnergyCost = 16.5
+    static let proCaseEnergyCost = 8.5
+    var randomCaseCost: Double { isPro ? Self.proCaseEnergyCost : Self.randomCaseEnergyCost }
 
-    func canAfford(life cost: Int) -> Bool { life >= cost }
+    /// A short human label for an energy amount — drops a trailing ".0".
+    static func energyText(_ v: Double) -> String {
+        let s = String(format: "%.1f", v)
+        return s.hasSuffix(".0") ? String(s.dropLast(2)) : s
+    }
+
+    func canAfford(life cost: Double) -> Bool { life >= cost }
     /// Spend energy after a case, never dropping below zero. Banks any pending
     /// regen first, then starts the regen clock if this drops us below full.
-    func spendEnergy(_ cost: Int) {
+    func spendEnergy(_ cost: Double) {
         regenerateEnergy()
         let wasFull = life >= Self.maxLife
         life = Swift.max(0, life - cost)
@@ -652,11 +681,20 @@ struct ClinicalCase: Identifiable, Codable {
     let xpReward: Int
     /// Optional structured Mentor Insight, unlocked with coins on the answer screen.
     var mentorInsight: MentorInsightContent? = nil
+    /// Optional presenting vitals (BP, PR, RR, SpO₂, Temperature, BMI).
+    var vitals: Vitals? = nil
     // Presentation fields for the rich case card (all optional with fallbacks).
     var title: String? = nil        // dramatic case title, e.g. "Collapse in the Night"
     var teaser: String? = nil       // narrative hook shown on the card
     var imageName: String? = nil    // hero image asset name (added to the app)
-    var difficulty: Int? = nil      // 1 (easy) … 5 (hard)
+    var difficulty: Int? = nil      // 1 (easy) … 5 (hard) — pips when no label is authored
+    /// Authored difficulty label (e.g. "Intern"). Shown in place of the pips.
+    var difficultyLabel: String? = nil
+    // Case metadata, all optional.
+    var occupation: String? = nil       // e.g. "Elementary School Teacher"
+    var duration: String? = nil         // of the presenting complaint, e.g. "3 months"
+    var setting: String? = nil          // e.g. "Primary Care Clinic (OPD)"
+    var guidelineFocus: String? = nil   // e.g. "NHLBI EPR-4 / GINA Guidelines"
     /// If this case came from the server it arrives answer-stripped; this points
     /// back to the row so the attempt can be graded server-side (where the
     /// answers live). `nil` for built-in cases, which carry their own key.
@@ -669,30 +707,32 @@ struct RemoteRef: Codable, Equatable {
     var id: String       // the table row's UUID
 }
 
+/// One teaching pearl: the title the player taps, and the note it opens.
+struct ClinicalPearl: Codable, Equatable {
+    var title: String = ""
+    var body: String = ""
+    var isEmpty: Bool { title.trimmed.isEmpty && body.trimmed.isEmpty }
+}
+
 /// Coin-locked expert teaching attached to a case (shown on the answer screen).
 struct MentorInsightContent: Codable, Equatable {
     var reasoning: String = ""            // core clinical insights / expert reasoning
     var differentials: String = ""        // why other diagnoses didn't fit
     var testRationale: String = ""        // test selection rationale
     var treatmentSequencing: String = ""  // treatment priorities & sequencing
-    var pearls: String = ""               // clinical pearls
-    var pitfalls: String = ""             // clinical traps to avoid
-    var learningPoints: String = ""       // learning points
+    var pearls: [ClinicalPearl] = []      // clinical pearls, one button each
 
     init(reasoning: String = "", differentials: String = "", testRationale: String = "",
-         treatmentSequencing: String = "", pearls: String = "", pitfalls: String = "",
-         learningPoints: String = "") {
+         treatmentSequencing: String = "", pearls: [ClinicalPearl] = []) {
         self.reasoning = reasoning
         self.differentials = differentials
         self.testRationale = testRationale
         self.treatmentSequencing = treatmentSequencing
         self.pearls = pearls
-        self.pitfalls = pitfalls
-        self.learningPoints = learningPoints
     }
 
-    // Tolerant decoding: older stored payloads predate the newer keys, so every
-    // field is optional-with-default and existing content still decodes cleanly.
+    // Tolerant decoding: every field is optional-with-default, so stored payloads
+    // predating a key — or carrying retired ones — still decode cleanly.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         func str(_ k: CodingKeys) -> String { ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil) ?? "" }
@@ -700,21 +740,32 @@ struct MentorInsightContent: Codable, Equatable {
         differentials = str(.differentials)
         testRationale = str(.testRationale)
         treatmentSequencing = str(.treatmentSequencing)
-        pearls = str(.pearls)
-        pitfalls = str(.pitfalls)
-        learningPoints = str(.learningPoints)
+        // `pearls` was authored as one prose blob before it became a list of
+        // titled pearls; a stored blob decodes as a single untitled pearl.
+        if let list = ((try? c.decodeIfPresent([ClinicalPearl].self, forKey: .pearls)) ?? nil) {
+            pearls = list.filter { !$0.isEmpty }
+        } else {
+            let blob = str(.pearls)
+            pearls = blob.trimmed.isEmpty ? [] : [ClinicalPearl(title: "", body: blob)]
+        }
     }
 
     var isEmpty: Bool {
-        [reasoning, differentials, testRationale, treatmentSequencing, pearls, pitfalls, learningPoints]
+        [reasoning, differentials, testRationale, treatmentSequencing]
             .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && pearls.isEmpty
+    }
+    /// The pearls as prose — used where a section needs plain text (the AI's
+    /// case context, and pearls carried over from before they had titles).
+    var pearlsText: String {
+        pearls.map { $0.title.trimmed.isEmpty ? $0.body : "\($0.title): \($0.body)" }
+            .joined(separator: "\n")
     }
     /// Non-empty (title, body) sections in display order.
     var sections: [(String, String)] {
         [("Core clinical insights", reasoning), ("Why other diagnoses didn't fit", differentials),
          ("Test selection rationale", testRationale), ("Treatment priorities & sequencing", treatmentSequencing),
-         ("Clinical pearls", pearls), ("Clinical traps to avoid", pitfalls),
-         ("Learning points", learningPoints)]
+         ("Clinical pearls", pearlsText)]
             .filter { !$0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }
@@ -798,6 +849,35 @@ struct InfoCard: Identifiable, Codable {
     let title: String
     let bullets: [String]
     let mentor: String
+    /// Optional system-grouped findings (e.g. physical exam): each renders as a
+    /// heading with its findings as sub-points, alongside any flat `bullets`.
+    var groups: [InfoGroup] = []
+}
+
+/// A named group of findings inside an info card (e.g. "Respiratory").
+struct InfoGroup: Identifiable, Codable, Equatable {
+    var id = UUID()
+    let system: String
+    let findings: [String]
+
+    enum CodingKeys: String, CodingKey { case system, findings }
+}
+
+/// Presenting vitals shown on the first case page.
+struct Vitals: Codable, Equatable {
+    var bp: String = ""
+    var pr: String = ""
+    var rr: String = ""
+    var spo2: String = ""
+    var temperature: String = ""
+    var bmi: String = ""
+
+    var isEmpty: Bool { pairs.isEmpty }
+    /// Non-empty (label, value) pairs in display order.
+    var pairs: [(String, String)] {
+        [("BP", bp), ("PR", pr), ("RR", rr), ("SpO₂", spo2), ("Temp", temperature), ("BMI", bmi)]
+            .filter { !$0.1.trimmed.isEmpty }
+    }
 }
 
 struct TestOption: Identifiable, Equatable, Codable {
@@ -807,6 +887,16 @@ struct TestOption: Identifiable, Equatable, Codable {
     let result: String
     let helpful: Bool          // drives mentor feedback
     let mentor: String
+    /// Optional result image (e.g. an ECG strip or chest X-ray), shown under the
+    /// result text. A public URL; empty keeps the plain text-only layout.
+    var imageURL: String = ""
+    /// Why this test was (in)appropriate here — revealed on the answer screen.
+    /// Part of the answer key: stripped from the case until it's been graded.
+    var rationale: String = ""
+    /// Short label for the role this option plays (e.g. "Definitive /
+    /// Segregation Test", "COPD/Emphysema Distractor"), used as the heading of
+    /// its rationale. Optional, and an answer: stripped until graded.
+    var tag: String = ""
     static func == (l: TestOption, r: TestOption) -> Bool { l.id == r.id }
 }
 
@@ -814,6 +904,12 @@ struct DiagnosisOption: Identifiable, Codable {
     var id = UUID()
     let name: String
     let correct: Bool
+    /// Why this diagnosis did or didn't fit — revealed on the answer screen.
+    /// Part of the answer key: stripped from the case until it's been graded.
+    var rationale: String = ""
+    /// Short label for the role it plays (e.g. "Definitive Diagnosis"), used as
+    /// the heading of its rationale. Optional, and an answer: stripped too.
+    var tag: String = ""
 }
 
 struct TreatmentOption: Identifiable, Equatable, Codable {
@@ -821,6 +917,12 @@ struct TreatmentOption: Identifiable, Equatable, Codable {
     let category: String
     let name: String
     let appropriate: Bool
+    /// Why this treatment was (in)appropriate here — revealed on the answer
+    /// screen. Part of the answer key: stripped until the case has been graded.
+    var rationale: String = ""
+    /// Short label for the role this option plays, used as the heading of its
+    /// rationale. Optional, and an answer: stripped until graded.
+    var tag: String = ""
     static func == (l: TreatmentOption, r: TreatmentOption) -> Bool { l.id == r.id }
 }
 
@@ -833,6 +935,10 @@ final class CaseSession: ObservableObject {
     @Published var tray: [TestOption] = []
     @Published var pickedDiagnosis: DiagnosisOption?
     @Published var treatmentTray: [TreatmentOption] = []
+    /// The in-case hints the player has tapped to reveal (Pro). Kept on the
+    /// session so a hint stays open as pages come and go, and so narration only
+    /// reads what's actually on screen.
+    @Published var revealedMentorHints: Set<String> = []
     /// Server cases are scored remotely; this flips true once the result is in
     /// (or grading failed). The outcome screen waits on it before revealing.
     @Published private(set) var revealed = false

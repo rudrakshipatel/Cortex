@@ -5,6 +5,9 @@ struct CXButton: View {
     var title: String
     var icon: String? = "arrow.right"
     var style: Style = .orange
+    /// When false the button dims and stops responding — used by the onboarding
+    /// screens to gate "Continue" on a selection.
+    var enabled: Bool = true
     var action: () -> Void
 
     enum Style { case orange, teal, outline }
@@ -19,6 +22,9 @@ struct CXButton: View {
             .foregroundStyle(style == .outline ? CX.orange : .white)
         }
         .buttonStyle(PushButtonStyle(face: face, lip: lip, outlined: style == .outline))
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+        .animation(.easeOut(duration: 0.18), value: enabled)
     }
 
     private var face: Color {
@@ -176,19 +182,49 @@ struct SectionTitle: View {
 }
 
 // MARK: - Mentor insight card (Dr. Vix)
+/// The revealed hint. An insight authored as several points is shown one at a
+/// time — the player swipes to the next, so each lands on its own.
 struct MentorCard: View {
     var text: String
+    @State private var page = 0
+
+    private var points: [String] { text.bulletPoints }
+    private var index: Int { points.isEmpty ? 0 : min(page, points.count - 1) }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             DrVix(pose: .idea, size: 46)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("MENTOR INSIGHT")
-                    .font(CX.label(11))
-                    .foregroundStyle(CX.orange)
-                Text(text)
-                    .font(CX.body(15))
-                    .foregroundStyle(CX.navy)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("MENTOR INSIGHT")
+                        .font(CX.label(11))
+                        .foregroundStyle(CX.orange)
+                    Spacer(minLength: 0)
+                    if points.count > 1 {
+                        Text("\(index + 1)/\(points.count)")
+                            .font(CX.label(11)).foregroundStyle(CX.navySoft)
+                    }
+                }
+                if points.count > 1 {
+                    // A nested page view: its own scroller takes the horizontal
+                    // swipe, so the case pages underneath don't turn instead.
+                    // The hidden copies size it to the tallest point — a paged
+                    // TabView can't size itself to its content.
+                    ZStack {
+                        ForEach(points.indices, id: \.self) { i in
+                            pointText(points[i]).opacity(0)
+                        }
+                        TabView(selection: $page) {
+                            ForEach(points.indices, id: \.self) { i in
+                                pointText(points[i]).tag(i)
+                            }
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                    }
+                    dots
+                } else {
+                    pointText(points.isEmpty ? text : points[0])
+                }
             }
         }
         .padding(14)
@@ -200,10 +236,28 @@ struct MentorCard: View {
                 .stroke(CX.teal.opacity(0.4), lineWidth: 1.5)
         )
     }
+
+    private func pointText(_ s: String) -> some View {
+        Text(s)
+            .font(CX.body(15))
+            .foregroundStyle(CX.navy)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var dots: some View {
+        HStack(spacing: 6) {
+            ForEach(points.indices, id: \.self) { i in
+                Circle().fill(i == index ? CX.teal : CX.teal.opacity(0.3))
+                    .frame(width: 6, height: 6)
+            }
+        }
+    }
 }
 
-/// Dr. Vix's in-case hint — a Cortex Pro feature. Pro players see the hint;
-/// free players see it locked (upgrade via GO PRO in the top bar).
+/// Dr. Vix's in-case hint — a Cortex Pro feature. Pro players tap to reveal it
+/// (so it can't give the case away before they've thought about it); free
+/// players see it locked (upgrade via GO PRO in the top bar).
 struct MentorInsight: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var session: CaseSession
@@ -211,10 +265,47 @@ struct MentorInsight: View {
 
     var body: some View {
         if app.isPro {
-            MentorCard(text: text)
+            if session.revealedMentorHints.contains(text) {
+                MentorCard(text: text)
+            } else {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { _ = session.revealedMentorHints.insert(text) }
+                } label: {
+                    MentorTeaserCard()
+                }
+                .buttonStyle(.plain)
+            }
         } else {
             ProLockedMentorCard()
         }
+    }
+}
+
+/// The unrevealed hint: tap it to show Dr. Vix's insight for this page.
+private struct MentorTeaserCard: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                DrVix(pose: .idea, size: 46)
+                Image(systemName: "hand.tap.fill").font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(CX.navySoft)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("MENTOR INSIGHT").font(CX.label(11)).foregroundStyle(CX.orange)
+                Text("Tap to see mentor insight.")
+                    .font(CX.body(14)).foregroundStyle(CX.navySoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CX.tealSoft.opacity(0.3))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(CX.teal.opacity(0.35), lineWidth: 1.5)
+        )
     }
 }
 
@@ -370,13 +461,21 @@ struct CaseHeroCard: View {
         }
     }
 
-    private var difficultyPips: some View {
-        let palette: [Color] = [Color(hex: 0x4CC38A), Color(hex: 0xA7E8C3),
-                                Color(hex: 0xF5D87A), Color(hex: 0xF3A6B0), Color(hex: 0xE86A6A)]
-        let level = clinicalCase.difficultyLevel
-        return HStack(spacing: 5) {
-            ForEach(0..<5, id: \.self) { i in
-                Capsule().fill(palette[i].opacity(i < level ? 1 : 0.3)).frame(width: 20, height: 9)
+    /// The authored difficulty label (e.g. "Intern") when the case declares one,
+    /// otherwise the 1–5 pips.
+    @ViewBuilder private var difficultyPips: some View {
+        if let label = clinicalCase.difficultyLabel?.trimmed, !label.isEmpty {
+            Text(label.uppercased()).font(CX.label(11)).foregroundStyle(CX.navy)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(CX.gold.opacity(0.25), in: Capsule())
+        } else {
+            let palette: [Color] = [Color(hex: 0x4CC38A), Color(hex: 0xA7E8C3),
+                                    Color(hex: 0xF5D87A), Color(hex: 0xF3A6B0), Color(hex: 0xE86A6A)]
+            let level = clinicalCase.difficultyLevel
+            HStack(spacing: 5) {
+                ForEach(0..<5, id: \.self) { i in
+                    Capsule().fill(palette[i].opacity(i < level ? 1 : 0.3)).frame(width: 20, height: 9)
+                }
             }
         }
     }

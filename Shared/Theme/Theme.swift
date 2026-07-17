@@ -18,6 +18,8 @@ enum CX {
     static let navy       = Color(hex: 0x15233B)   // headings / stat bars
     static let navySoft   = Color(hex: 0x4A5A74)   // secondary text
     static let gold       = Color(hex: 0xF5B72E)   // stat numbers / XP
+    static let red        = Color(hex: 0xE5484D)   // wrong / incorrect
+    static let slate      = Color(hex: 0x7688A6)   // neutral — no verdict either way
 
     // MARK: Surfaces
     static let bgTop      = Color(hex: 0xDCF4ED)   // mint
@@ -36,6 +38,10 @@ enum CX {
     }
     static var tealButton: LinearGradient {
         LinearGradient(colors: [teal, tealDark],
+                       startPoint: .top, endPoint: .bottom)
+    }
+    static var goldButton: LinearGradient {
+        LinearGradient(colors: [gold, Color(hex: 0xD9971A)],
                        startPoint: .top, endPoint: .bottom)
     }
     static var navyBar: LinearGradient {

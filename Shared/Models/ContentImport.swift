@@ -87,11 +87,19 @@ struct CaseDTO: Codable {
     var presentation: SectionDTO?   // → "Chief Complaint" page
     var history: SectionDTO?        // → "History" page
     var examination: SectionDTO?    // → "Physical Examination" page
+    /// Presenting vitals (BP, PR, RR, SpO₂, Temperature, BMI).
+    var vitals: Vitals?
     // Card presentation (optional).
     var title: String?              // dramatic case title
     var teaser: String?             // narrative hook on the card
     var imageName: String?          // hero image asset name
-    var difficulty: Int?            // 1…5
+    var difficulty: Int?            // 1…5 — pips when no label is authored
+    var difficultyLabel: String?    // e.g. "Intern"
+    // Case metadata (optional).
+    var occupation: String?
+    var duration: String?
+    var setting: String?
+    var guidelineFocus: String?
 
     /// `requireKey` is true for authored/imported cases (which must declare the
     /// correct answer) and false for server-delivered cases, which arrive with
@@ -101,7 +109,9 @@ struct CaseDTO: Codable {
             throw ImportError.field("\(label): 'specialty', 'patientName' and 'chiefComplaint' are required")
         }
         let dx = diagnoses.filter { !$0.name.trimmed.isEmpty }
-                          .map { DiagnosisOption(name: $0.name.trimmed, correct: $0.correct ?? false) }
+                          .map { DiagnosisOption(name: $0.name.trimmed, correct: $0.correct ?? false,
+                                                 rationale: ($0.rationale ?? "").trimmed,
+                                                 tag: ($0.tag ?? "").trimmed) }
         guard dx.count >= 2 else { throw ImportError.field("\(label): needs at least 2 diagnoses") }
         if requireKey {
             guard dx.contains(where: \.correct) else {
@@ -119,20 +129,26 @@ struct CaseDTO: Codable {
             tests: (tests ?? []).map {
                 TestOption(category: ($0.category ?? "").trimmed, name: $0.name.trimmed,
                            result: ($0.result ?? "").trimmed, helpful: $0.helpful ?? false,
-                           mentor: ($0.mentor ?? "").trimmed)
+                           mentor: ($0.mentor ?? "").trimmed, imageURL: ($0.imageURL ?? "").trimmed,
+                           rationale: ($0.rationale ?? "").trimmed, tag: ($0.tag ?? "").trimmed)
             },
             diagnosisQuestion: (diagnosisQuestion ?? "Which diagnosis best fits this presentation?").trimmed,
             diagnoses: dx,
             treatments: (treatments ?? []).map {
                 TreatmentOption(category: ($0.category ?? "").trimmed, name: $0.name.trimmed,
-                                appropriate: $0.appropriate ?? false)
+                                appropriate: $0.appropriate ?? false, rationale: ($0.rationale ?? "").trimmed,
+                                tag: ($0.tag ?? "").trimmed)
             },
             outcomeTitle: (outcomeTitle ?? "Well reasoned!").trimmed,
             outcomeBody: (outcomeBody ?? "").trimmed,
             xpReward: xpReward ?? 20,
             mentorInsight: (mentorInsight?.isEmpty ?? true) ? nil : mentorInsight,
+            vitals: (vitals?.isEmpty ?? true) ? nil : vitals,
             title: title?.trimmed, teaser: teaser?.trimmed,
-            imageName: imageName?.trimmed, difficulty: difficulty)
+            imageName: imageName?.trimmed, difficulty: difficulty,
+            difficultyLabel: difficultyLabel?.trimmed, occupation: occupation?.trimmed,
+            duration: duration?.trimmed, setting: setting?.trimmed,
+            guidelineFocus: guidelineFocus?.trimmed)
     }
 
     /// Build a DTO from a fully-formed case — used to broadcast/publish. Emits the
@@ -147,20 +163,26 @@ struct CaseDTO: Codable {
         // Bucket the case's info cards into the three named sections by title.
         for card in c.infoCards {
             let t = card.title.lowercased()
-            let s = SectionDTO(bullets: card.bullets, mentor: card.mentor)
+            let s = SectionDTO(bullets: card.bullets, mentor: card.mentor,
+                               groups: card.groups.isEmpty ? nil
+                                   : card.groups.map { InfoGroupDTO(system: $0.system, findings: $0.findings) })
             if t.contains("history") || t.contains("hx") { history = s }
             else if t.contains("exam") { examination = s }
             else { presentation = s }
         }
-        tests = c.tests.map { TestDTO(category: $0.category, name: $0.name, result: $0.result, helpful: $0.helpful, mentor: $0.mentor) }
+        tests = c.tests.map { TestDTO(category: $0.category, name: $0.name, result: $0.result, helpful: $0.helpful, mentor: $0.mentor, rationale: $0.rationale, tag: $0.tag, imageURL: $0.imageURL) }
         diagnosisQuestion = c.diagnosisQuestion
-        diagnoses = c.diagnoses.map { DiagnosisDTO(name: $0.name, correct: $0.correct) }
-        treatments = c.treatments.map { TreatmentDTO(category: $0.category, name: $0.name, appropriate: $0.appropriate) }
+        diagnoses = c.diagnoses.map { DiagnosisDTO(name: $0.name, correct: $0.correct, rationale: $0.rationale, tag: $0.tag) }
+        treatments = c.treatments.map { TreatmentDTO(category: $0.category, name: $0.name, appropriate: $0.appropriate, rationale: $0.rationale, tag: $0.tag) }
         outcomeTitle = c.outcomeTitle
         outcomeBody = c.outcomeBody
         xpReward = c.xpReward
         mentorInsight = c.mentorInsight
+        vitals = c.vitals
         title = c.title; teaser = c.teaser; imageName = c.imageName; difficulty = c.difficulty
+        difficultyLabel = c.difficultyLabel
+        occupation = c.occupation; duration = c.duration
+        setting = c.setting; guidelineFocus = c.guidelineFocus
     }
 
     /// Prefer the three named sections (titled Chief Complaint / History /
@@ -183,17 +205,22 @@ struct CaseDTO: Codable {
         guard let s else { return nil }
         let bullets = (s.bullets ?? []).map(\.trimmed).filter { !$0.isEmpty }
         let mentor = (s.mentor ?? "").trimmed
-        guard !bullets.isEmpty || !mentor.isEmpty else { return nil }
-        return InfoCard(title: title, bullets: bullets, mentor: mentor)
+        let groups = (s.groups ?? []).map {
+            InfoGroup(system: $0.system.trimmed, findings: $0.findings.map(\.trimmed).filter { !$0.isEmpty })
+        }.filter { !$0.system.isEmpty || !$0.findings.isEmpty }
+        guard !bullets.isEmpty || !mentor.isEmpty || !groups.isEmpty else { return nil }
+        return InfoCard(title: title, bullets: bullets, mentor: mentor, groups: groups)
     }
 }
 
-struct SectionDTO: Codable { var bullets: [String]?; var mentor: String? }
+struct SectionDTO: Codable { var bullets: [String]?; var mentor: String?; var groups: [InfoGroupDTO]? }
+struct InfoGroupDTO: Codable { var system: String; var findings: [String] }
 
 struct InfoCardDTO: Codable { var title: String; var bullets: [String]; var mentor: String? }
-struct TestDTO: Codable { var category: String?; var name: String; var result: String?; var helpful: Bool?; var mentor: String? }
-struct DiagnosisDTO: Codable { var name: String; var correct: Bool? }   // absent on server-stripped cases
-struct TreatmentDTO: Codable { var category: String?; var name: String; var appropriate: Bool? }
+// `helpful`/`appropriate`/`rationale`/`tag` are absent on server-stripped cases.
+struct TestDTO: Codable { var category: String?; var name: String; var result: String?; var helpful: Bool?; var mentor: String?; var rationale: String?; var tag: String?; var imageURL: String? }
+struct DiagnosisDTO: Codable { var name: String; var correct: Bool?; var rationale: String?; var tag: String? }
+struct TreatmentDTO: Codable { var category: String?; var name: String; var appropriate: Bool?; var rationale: String?; var tag: String? }
 
 // MARK: - Result & errors
 

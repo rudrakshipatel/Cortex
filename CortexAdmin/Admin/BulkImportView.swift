@@ -33,7 +33,7 @@ struct BulkImportView: View {
             } header: {
                 Text("Paste JSON")
             } footer: {
-                Text("A JSON object with \"clinical\", \"daily\" (each with a \"date\") and/or \"emergencies\" (each with a \"sendAt\") arrays. Each case uses \"presentation\", \"history\" and \"examination\" sections (Chief Complaint → History → Physical Examination), and an optional \"mentorInsight\" object (reasoning, differentials, testRationale, treatmentSequencing, pearls, pitfalls, learningPoints). IDs are generated automatically.")
+                Text("A JSON object with \"clinical\", \"daily\" (each with a \"date\") and/or \"emergencies\" (each with a \"sendAt\") arrays. Each case uses \"presentation\", \"history\" and \"examination\" sections (Chief Complaint → History → Physical Examination), and an optional \"mentorInsight\" object (reasoning, differentials, testRationale, treatmentSequencing, and \"pearls\": an array of {title, body} — one button each). A test may carry an \"imageURL\" — a public link shown on its result card (attach one from the case editor to upload it). Each test, treatment and diagnosis takes an optional \"rationale\" — the note shown when its button is tapped on the answer screen — and an optional \"tag\" heading it (e.g. \"COPD/Emphysema Distractor\"). IDs are generated automatically.")
             }
 
             Section {
@@ -177,7 +177,10 @@ enum JSONTemplates {
           "tests": [
             { "category": "Clinical", "name": "Skin exam",
               "result": "Auspitz sign positive", "helpful": true,
-              "mentor": "Supports psoriasis." }
+              "mentor": "Supports psoriasis.",
+              "imageURL": "https://…/ecg-strip.png",
+              "tag": "Definitive / Segregation Test",
+              "rationale": "Why this test was (in)appropriate — shown on the answer screen." }
           ],
           "diagnosisQuestion": "Best diagnosis?",
           "diagnoses": [
@@ -185,7 +188,8 @@ enum JSONTemplates {
             { "name": "Eczema", "correct": false }
           ],
           "treatments": [
-            { "category": "Topical", "name": "Topical steroid", "appropriate": true },
+            { "category": "Topical", "name": "Topical steroid", "appropriate": true,
+              "rationale": "Why this treatment was (in)appropriate — shown on the answer screen." },
             { "category": "Antibiotics", "name": "Oral antibiotics", "appropriate": false }
           ],
           "outcomeTitle": "Nailed it!",
@@ -196,9 +200,10 @@ enum JSONTemplates {
             "differentials": "Why the other diagnoses didn't fit.",
             "testRationale": "Why these tests were the right ones to order.",
             "treatmentSequencing": "Treatment priorities and the order to start them.",
-            "pearls": "Clinical pearls worth remembering.",
-            "pitfalls": "Clinical traps to avoid.",
-            "learningPoints": "Key learning points from this case."
+            "pearls": [
+              { "title": "The \\"Silent Chest\\" is a Severe Emergency",
+                "body": "The note this pearl's button opens." }
+            ]
           }
         }
       ]
@@ -245,9 +250,9 @@ enum JSONTemplates {
               "differentials": "Why the other diagnoses didn't fit.",
               "testRationale": "Why these tests were the right ones to order.",
               "treatmentSequencing": "Treatment priorities and the order to start them.",
-              "pearls": "Clinical pearls worth remembering.",
-              "pitfalls": "Clinical traps to avoid.",
-              "learningPoints": "Key learning points from this case."
+              "pearls": [
+                { "title": "Pearl title (the button)", "body": "The note it opens." }
+              ]
             }
           }
         }
@@ -293,9 +298,9 @@ enum JSONTemplates {
               "differentials": "Why the other diagnoses didn't fit.",
               "testRationale": "Why these tests were the right ones to order.",
               "treatmentSequencing": "Treatment priorities and the order to start them.",
-              "pearls": "Clinical pearls worth remembering.",
-              "pitfalls": "Clinical traps to avoid.",
-              "learningPoints": "Key learning points from this case."
+              "pearls": [
+                { "title": "Pearl title (the button)", "body": "The note it opens." }
+              ]
             }
           }
         }
