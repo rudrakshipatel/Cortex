@@ -100,6 +100,17 @@ def clean(line):
     return BULLET.sub("", TAGS.sub("", line).replace(" ", " ")).rstrip()
 
 
+# The grey "dose \u2022 frequency \u2022 duration" line under a treatment name, recognised
+# by its inline style (small, #666 grey). Its text is kept verbatim as the
+# treatment's `dosing`; any/all of the three \u2022 parts may be absent.
+DOSING_SPAN = re.compile(r"color:\s*#666|font-size:\s*0?\.85\s*em", re.I)
+
+
+def strip_dose(s):
+    """Drop a leading '>' from the dose, e.g. '>200 mg \u2022 \u2026' -> '200 mg \u2022 \u2026'."""
+    return re.sub(r"^\s*>\s*", "", s).strip()
+
+
 LEADING = re.compile(r"^[ \t]*")
 BULLET_MARK = re.compile(r"^[\u2022\u00b7\u25e6\u25aa\-\*]\s")
 
@@ -317,6 +328,12 @@ def parse(text):
         if current is None:
             continue
 
+        # The grey dosing span under a treatment name → the treatment's `dosing`.
+        if part == "treatment" and DOSING_SPAN.search(raw):
+            treatments[current]["dosing"] = strip_dose(line.strip())
+            field = None
+            continue
+
         bag = {"treatment": treatments, "diagnosis": diagnoses}.get(part, tests)
         f = FIELD.match(line.strip())
         if f:
@@ -407,13 +424,16 @@ def norm_name(s):
 
 def blank():
     return {"category": "", "name": "", "result": "", "helpful": None,
-            "mentor": "", "rationale": "", "tag": ""}
+            "mentor": "", "rationale": "", "tag": "", "dosing": ""}
 
 
 def as_treatment(t):
     """Treatments carry `appropriate` instead of `helpful`, and have no result."""
-    return {"category": t["category"], "name": t["name"], "appropriate": t["helpful"],
-            "rationale": t["rationale"], "tag": t["tag"]}
+    out = {"category": t["category"], "name": t["name"], "appropriate": t["helpful"],
+           "rationale": t["rationale"], "tag": t["tag"]}
+    if t.get("dosing"):
+        out["dosing"] = t["dosing"]   # optional grey dose • frequency • duration line
+    return out
 
 
 def as_diagnosis(d):

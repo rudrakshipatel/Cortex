@@ -136,7 +136,9 @@ struct CaseDTO: Codable {
             diagnoses: dx,
             treatments: (treatments ?? []).map {
                 TreatmentOption(category: ($0.category ?? "").trimmed, name: $0.name.trimmed,
-                                appropriate: $0.appropriate ?? false, rationale: ($0.rationale ?? "").trimmed,
+                                appropriate: $0.appropriate ?? false,
+                                dosing: TreatmentDTO.cleanDosing($0.dosing),
+                                rationale: ($0.rationale ?? "").trimmed,
                                 tag: ($0.tag ?? "").trimmed)
             },
             outcomeTitle: (outcomeTitle ?? "Well reasoned!").trimmed,
@@ -173,7 +175,7 @@ struct CaseDTO: Codable {
         tests = c.tests.map { TestDTO(category: $0.category, name: $0.name, result: $0.result, helpful: $0.helpful, mentor: $0.mentor, rationale: $0.rationale, tag: $0.tag, imageURL: $0.imageURL) }
         diagnosisQuestion = c.diagnosisQuestion
         diagnoses = c.diagnoses.map { DiagnosisDTO(name: $0.name, correct: $0.correct, rationale: $0.rationale, tag: $0.tag) }
-        treatments = c.treatments.map { TreatmentDTO(category: $0.category, name: $0.name, appropriate: $0.appropriate, rationale: $0.rationale, tag: $0.tag) }
+        treatments = c.treatments.map { TreatmentDTO(category: $0.category, name: $0.name, appropriate: $0.appropriate, dosing: $0.dosing, rationale: $0.rationale, tag: $0.tag) }
         outcomeTitle = c.outcomeTitle
         outcomeBody = c.outcomeBody
         xpReward = c.xpReward
@@ -220,7 +222,18 @@ struct InfoCardDTO: Codable { var title: String; var bullets: [String]; var ment
 // `helpful`/`appropriate`/`rationale`/`tag` are absent on server-stripped cases.
 struct TestDTO: Codable { var category: String?; var name: String; var result: String?; var helpful: Bool?; var mentor: String?; var rationale: String?; var tag: String?; var imageURL: String? }
 struct DiagnosisDTO: Codable { var name: String; var correct: Bool?; var rationale: String?; var tag: String? }
-struct TreatmentDTO: Codable { var category: String?; var name: String; var appropriate: Bool?; var rationale: String?; var tag: String? }
+struct TreatmentDTO: Codable {
+    var category: String?; var name: String; var appropriate: Bool?
+    var dosing: String?; var rationale: String?; var tag: String?
+
+    /// Trim the dosing line and drop a leading ">" on the dose ("> 200 mg" →
+    /// "200 mg"), so it reads as a plain value.
+    static func cleanDosing(_ s: String?) -> String {
+        let t = (s ?? "").trimmed
+        guard t.first == ">" else { return t }
+        return String(t.dropFirst()).trimmed
+    }
+}
 
 // MARK: - Result & errors
 

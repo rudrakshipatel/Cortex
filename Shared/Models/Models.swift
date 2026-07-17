@@ -937,6 +937,10 @@ struct TreatmentOption: Identifiable, Equatable, Codable {
     let category: String
     let name: String
     let appropriate: Bool
+    /// Optional grey "dose • frequency • duration" line shown under the name
+    /// while choosing. Neutral prescribing info, not an answer — present before
+    /// grading. Any/all of the three • parts may be absent (or the whole line).
+    var dosing: String = ""
     /// Why this treatment was (in)appropriate here — revealed on the answer
     /// screen. Part of the answer key: stripped until the case has been graded.
     var rationale: String = ""

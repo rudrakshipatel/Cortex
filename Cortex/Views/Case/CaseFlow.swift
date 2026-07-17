@@ -698,9 +698,16 @@ private struct TreatmentStep: View {
     private func treatmentRow(_ t: TreatmentOption) -> some View {
         let added = session.treatmentTray.contains(t)
         return HStack {
-            Text(t.name).font(CX.body(16)).foregroundStyle(CX.navy)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(t.name).font(CX.body(16)).foregroundStyle(CX.navy)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Optional grey dose • frequency • duration line.
+                if !t.dosing.trimmed.isEmpty {
+                    Text(t.dosing).font(CX.body(13)).foregroundStyle(CX.navySoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
             Button(added ? "Remove" : "Add") {
                 withAnimation {
                     if added { session.treatmentTray.removeAll { $0 == t } }

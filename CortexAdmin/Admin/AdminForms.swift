@@ -219,6 +219,8 @@ struct CaseEditor<Header: View>: View {
                             TextField("Category (e.g. Medications)", text: $draft.treatments[i].category)
                                 .font(.footnote).foregroundStyle(.secondary)
                             TextField("Treatment name", text: $draft.treatments[i].name)
+                            TextField("Dosing (dose • frequency • duration) — optional", text: $draft.treatments[i].dosing)
+                                .font(.footnote).foregroundStyle(.secondary)
                             TextField("Status tag (e.g. Symptomatic Distractor)", text: $draft.treatments[i].tag)
                                 .font(.footnote)
                             TextField("Why this treatment was (in)appropriate",
@@ -373,7 +375,7 @@ struct CaseDraft {
         while diagnoses.count < 2 { diagnoses.append(DiagnosisDraft()) }
         treatments = c.treatments.map {
             TreatmentDraft(category: $0.category, name: $0.name, appropriate: $0.appropriate,
-                           rationale: $0.rationale, tag: $0.tag)
+                           dosing: $0.dosing, rationale: $0.rationale, tag: $0.tag)
         }
         if treatments.isEmpty { treatments = [TreatmentDraft()] }
         outcomeTitle = c.outcomeTitle
@@ -421,6 +423,7 @@ struct CaseDraft {
             },
             treatments: treatments.filter { !$0.name.trimmed.isEmpty }.map {
                 TreatmentOption(category: $0.category.trimmed, name: $0.name.trimmed, appropriate: $0.appropriate,
+                                dosing: TreatmentDTO.cleanDosing($0.dosing),
                                 rationale: $0.rationale.trimmed, tag: $0.tag.trimmed)
             },
             outcomeTitle: outcomeTitle.trimmed.isEmpty ? "Well reasoned!" : outcomeTitle.trimmed,
@@ -551,4 +554,4 @@ struct InfoGroupDraft: Identifiable { var id = UUID(); var system = ""; var find
 struct PearlDraft: Identifiable { var id = UUID(); var title = ""; var body = "" }
 struct TestDraft: Identifiable { var id = UUID(); var category = ""; var name = ""; var result = ""; var helpful = false; var mentor = ""; var rationale = ""; var tag = ""; var imageURL = "" }
 struct DiagnosisDraft: Identifiable { var id = UUID(); var name = ""; var correct = false; var rationale = ""; var tag = "" }
-struct TreatmentDraft: Identifiable { var id = UUID(); var category = ""; var name = ""; var appropriate = false; var rationale = ""; var tag = "" }
+struct TreatmentDraft: Identifiable { var id = UUID(); var category = ""; var name = ""; var appropriate = false; var dosing = ""; var rationale = ""; var tag = "" }
