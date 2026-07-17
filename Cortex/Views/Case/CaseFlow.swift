@@ -1445,15 +1445,23 @@ private struct CaseReviewCard: View {
         }
     }
 
-    // Tests: good = ordered & helpful; bad = ordered & not helpful.
+    // Every option lands in one of three buckets: correctly selected, missed
+    // (recommended but not ordered), and incorrectly selected.
     private var testsReview: some View {
-        let good = session.tray.filter(\.helpful)
-        let bad  = session.tray.filter { !$0.helpful }
+        let selected = Set(session.tray.map(\.id))
+        let correct   = session.tray.filter(\.helpful).map(\.name)
+        let incorrect = session.tray.filter { !$0.helpful }.map(\.name)
+        let missed    = c.tests.filter { $0.helpful && !selected.contains($0.id) }.map(\.name)
         return VStack(alignment: .leading, spacing: 14) {
-            reviewGroup(good: true, "Efficient Test Choices", good.map(\.name),
-                        empty: "No high-yield tests ordered.")
-            if !bad.isEmpty {
-                reviewGroup(good: false, "Low-Yield Tests", bad.map(\.name), empty: "")
+            reviewGroup(.correct, "Correctly Selected", correct,
+                        empty: "No recommended investigations ordered.")
+            if !missed.isEmpty {
+                reviewGroup(.missed, "Missed Investigations", missed,
+                            message: "You did not select these recommended investigations.")
+            }
+            if !incorrect.isEmpty {
+                reviewGroup(.incorrect, "Incorrectly Selected", incorrect,
+                            message: "These investigations were unnecessary or incorrect for this case.")
             }
         }
     }
@@ -1462,37 +1470,70 @@ private struct CaseReviewCard: View {
         let correct = c.diagnoses.first(where: \.correct)?.name ?? "—"
         let picked = session.pickedDiagnosis?.name ?? "No answer"
         return VStack(alignment: .leading, spacing: 14) {
-            reviewGroup(good: session.diagnosisCorrect,
+            reviewGroup(session.diagnosisCorrect ? .correct : .incorrect,
                         session.diagnosisCorrect ? "Correct Diagnosis" : "Your Diagnosis",
-                        [picked], empty: "")
+                        [picked])
             if !session.diagnosisCorrect {
-                reviewGroup(good: true, "Correct Answer", [correct], empty: "")
+                reviewGroup(.correct, "Correct Answer", [correct])
             }
         }
     }
 
+    /// The same three buckets for treatments.
     private var treatmentReview: some View {
-        let good = session.treatmentTray.filter(\.appropriate)
-        let bad  = session.treatmentTray.filter { !$0.appropriate }
+        let selected = Set(session.treatmentTray.map(\.id))
+        let correct   = session.treatmentTray.filter(\.appropriate).map(\.name)
+        let incorrect = session.treatmentTray.filter { !$0.appropriate }.map(\.name)
+        let missed    = c.treatments.filter { $0.appropriate && !selected.contains($0.id) }.map(\.name)
         return VStack(alignment: .leading, spacing: 14) {
-            reviewGroup(good: true, "Appropriate Treatments", good.map(\.name),
-                        empty: "No appropriate treatments selected.")
-            if !bad.isEmpty {
-                reviewGroup(good: false, "Inappropriate Treatments", bad.map(\.name), empty: "")
+            reviewGroup(.correct, "Correctly Selected", correct,
+                        empty: "No recommended treatments selected.")
+            if !missed.isEmpty {
+                reviewGroup(.missed, "Missed Treatments", missed,
+                            message: "You did not select these recommended treatments.")
+            }
+            if !incorrect.isEmpty {
+                reviewGroup(.incorrect, "Incorrectly Selected", incorrect,
+                            message: "These treatments were unnecessary or incorrect for this case.")
             }
         }
     }
 
-    private func reviewGroup(good: Bool, _ title: String, _ items: [String], empty: String) -> some View {
+    /// Visual style for each case-review feedback bucket.
+    private enum ReviewKind {
+        case correct, missed, incorrect
+        var color: Color {
+            switch self {
+            case .correct:   return CX.teal
+            case .missed:    return CX.orange
+            case .incorrect: return CX.red
+            }
+        }
+        var icon: String {
+            switch self {
+            case .correct:   return "checkmark.circle.fill"
+            case .missed:    return "exclamationmark.circle.fill"
+            case .incorrect: return "xmark.circle.fill"
+            }
+        }
+    }
+
+    private func reviewGroup(_ kind: ReviewKind, _ title: String, _ items: [String],
+                             message: String? = nil, empty: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: good ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(good ? CX.teal : .red)
-                Text(title).font(CX.heading(16)).foregroundStyle(good ? CX.teal : .red)
+                Image(systemName: kind.icon).foregroundStyle(kind.color)
+                Text(title).font(CX.heading(16)).foregroundStyle(kind.color)
             }
             if items.isEmpty {
-                Text(empty).font(CX.body(14)).foregroundStyle(CX.navySoft)
+                if let empty {
+                    Text(empty).font(CX.body(14)).foregroundStyle(CX.navySoft)
+                }
             } else {
+                if let message {
+                    Text(message).font(CX.body(13)).foregroundStyle(CX.navySoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(items, id: \.self) { item in
                     HStack(alignment: .top, spacing: 8) {
                         Circle().fill(CX.navy).frame(width: 6, height: 6).padding(.top, 7)
