@@ -54,7 +54,7 @@
          <EnvironmentVariable
             key = "CX_SCREEN"
             value = "true"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </EnvironmentVariable>
       </EnvironmentVariables>
       <StoreKitConfigurationFileReference

@@ -44,7 +44,42 @@ final class SupabaseService: ObservableObject {
     /// The signed-in player's auth user id — the key for their cloud profile and
     /// their leaderboard identity. Not a secret, so it stays in UserDefaults.
     @Published private(set) var userId: String? = UserDefaults.standard.string(forKey: "cx.sbUserId")
+    /// The account holder's name as the provider reported it (Google/Apple put it
+    /// in `user_metadata`). Nil for email-code sign-ins, which carry no name.
+    @Published private(set) var userName: String? = UserDefaults.standard.string(forKey: "cx.sbUserName")
     private var userToken: String? { didSet { Keychain.set(userToken, for: K.userToken) } }
+
+    /// The best name available for the signed-in account: the provider's own,
+    /// else a tidied form of the email's local part ("john.doe@x.com" → "John
+    /// Doe"). Nil when there's nothing to go on.
+    var accountDisplayName: String? {
+        if let n = userName?.trimmed, !n.isEmpty { return n }
+        return Self.nameFromEmail(userEmail)
+    }
+
+    /// Pull the provider-supplied name out of an auth user object.
+    static func providerName(from user: [String: Any]) -> String? {
+        guard let meta = user["user_metadata"] as? [String: Any] else { return nil }
+        for key in ["full_name", "name", "preferred_username", "given_name"] {
+            if let v = (meta[key] as? String)?.trimmed, !v.isEmpty { return v }
+        }
+        return nil
+    }
+
+    /// Best-effort human name from an email address: take the local part, drop
+    /// any "+tag", split on separators, strip trailing digits and capitalise.
+    /// Returns nil when nothing sensible survives.
+    static func nameFromEmail(_ email: String?) -> String? {
+        guard let local = email?.split(separator: "@").first.map(String.init),
+              let base = local.split(separator: "+").first else { return nil }
+        let words = base.split(whereSeparator: { ".-_".contains($0) })
+            .map { $0.drop(while: \.isNumber).reversed().drop(while: \.isNumber).reversed() }
+            .map(String.init)
+            .filter { $0.count >= 2 }
+            .map(\.capitalized)
+        let name = words.joined(separator: " ")
+        return name.isEmpty ? nil : name
+    }
 
     var isConfigured: Bool { SupabaseConfig.isConfigured }
     var isAdminSignedIn: Bool { adminToken != nil }
@@ -73,8 +108,10 @@ final class SupabaseService: ObservableObject {
         let user = try? await fetchUser(access)
         userEmail = user?.email
         userId = user?.id
+        userName = user?.name
         UserDefaults.standard.set(user?.email, forKey: "cx.sbUserEmail")
         UserDefaults.standard.set(user?.id, forKey: "cx.sbUserId")
+        UserDefaults.standard.set(user?.name, forKey: "cx.sbUserName")
         return user?.email
     }
 
@@ -82,9 +119,11 @@ final class SupabaseService: ObservableObject {
         userToken = nil
         userEmail = nil
         userId = nil
+        userName = nil
         Keychain.delete(K.userRefresh)
         UserDefaults.standard.removeObject(forKey: "cx.sbUserEmail")
         UserDefaults.standard.removeObject(forKey: "cx.sbUserId")
+        UserDefaults.standard.removeObject(forKey: "cx.sbUserName")
     }
 
     // MARK: Email sign-in (6-digit code)
@@ -127,8 +166,10 @@ final class SupabaseService: ObservableObject {
         let userObj = obj["user"] as? [String: Any]
         userId = userObj?["id"] as? String
         userEmail = (userObj?["email"] as? String) ?? email
+        userName = userObj.flatMap(Self.providerName(from:))
         UserDefaults.standard.set(userEmail, forKey: "cx.sbUserEmail")
         UserDefaults.standard.set(userId, forKey: "cx.sbUserId")
+        UserDefaults.standard.set(userName, forKey: "cx.sbUserName")
         return userEmail
     }
 
@@ -138,8 +179,8 @@ final class SupabaseService: ObservableObject {
         return (obj["msg"] ?? obj["error_description"] ?? obj["error"] ?? obj["message"]) as? String
     }
 
-    /// GET /auth/v1/user to read the signed-in account's id + email.
-    private func fetchUser(_ accessToken: String) async throws -> (id: String, email: String?)? {
+    /// GET /auth/v1/user to read the signed-in account's id, email and name.
+    private func fetchUser(_ accessToken: String) async throws -> (id: String, email: String?, name: String?)? {
         guard let url = URL(string: "\(SupabaseConfig.url)/auth/v1/user") else { return nil }
         var req = URLRequest(url: url)
         req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
@@ -147,7 +188,7 @@ final class SupabaseService: ObservableObject {
         let (data, _) = try await URLSession.shared.data(for: req)
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = obj["id"] as? String else { return nil }
-        return (id, obj["email"] as? String)
+        return (id, obj["email"] as? String, Self.providerName(from: obj))
     }
 
     /// Resolve the current user id, fetching it from the server if we only have
@@ -157,7 +198,9 @@ final class SupabaseService: ObservableObject {
         guard let token = userToken, let user = try? await fetchUser(token) else { return nil }
         userId = user.id
         userEmail = user.email
+        userName = user.name
         UserDefaults.standard.set(user.id, forKey: "cx.sbUserId")
+        UserDefaults.standard.set(user.name, forKey: "cx.sbUserName")
         return user.id
     }
 

@@ -272,6 +272,24 @@ final class AppState: ObservableObject {
         return "Guest" + String((0..<5).map { _ in chars.randomElement()! })
     }
 
+    /// Whether a name is one we assigned rather than one the player typed — a
+    /// "GuestXXXXX", the legacy "Dr. Vix" default, or nothing at all. Only these
+    /// may be replaced by the name on their account.
+    static func isAssignedName(_ n: String) -> Bool {
+        let t = n.trimmed
+        if t.isEmpty || t == "Dr. Vix" { return true }
+        guard t.count == 10, t.hasPrefix("Guest") else { return false }
+        return t.dropFirst(5).allSatisfy { $0.isUppercase || $0.isNumber }
+    }
+
+    /// Take the player's name from their sign-in details, so a signed-in user
+    /// isn't left as "Guest7K2QX". Never touches a name they chose themselves.
+    private func adoptAccountName() {
+        guard Self.isAssignedName(displayName),
+              let name = SupabaseService.shared.accountDisplayName else { return }
+        displayName = name
+    }
+
     /// Bind the signed-in account: load its cloud profile, or create a fresh one.
     /// The very first account to sign in on a device claims the existing local
     /// progress; later/other accounts start clean.
@@ -284,12 +302,14 @@ final class AppState: ObservableObject {
             if let p = try? JSONDecoder().decode(ProfileState.self, from: data) {
                 applyProfile(p)                          // existing account → its own state
             }
+            adoptAccountName()                           // still unnamed → use the account's own name
             defaults.set(true, forKey: "cx.hasBoundAccount")
         case .empty:
             // Genuinely no profile for this account.
             if defaults.bool(forKey: "cx.hasBoundAccount") {
                 resetProgress()                          // a different account had this device → fresh
             }                                            // else: first ever → claim current local progress
+            adoptAccountName()                           // name the fresh profile before it's created
             await pushProfileNow()                       // create the row
             defaults.set(true, forKey: "cx.hasBoundAccount")
         case .failed:

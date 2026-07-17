@@ -102,6 +102,7 @@ struct DebugRouter: View {
         case "country":       OnboardingFlow(startAt: .country)
         case "reminder":      OnboardingFlow(startAt: .commitment)
         case "intro":         OnboardingFlow(startAt: .welcome)
+        case "paywall":       OnboardingFlow(startAt: .proPaywall)
         case "case_info":     CaseFlow(clinicalCase: Seed.rlsCase)
         case "case_tests":    CaseFlow(clinicalCase: Seed.rlsCase, initialStep: .tests)
         case "case_results":  CaseFlow(clinicalCase: Seed.rlsCase, initialStep: .results)
