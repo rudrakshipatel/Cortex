@@ -511,11 +511,18 @@ notify pgrst, 'reload schema';
 --   • Leagues are between REAL players (no bots).
 --   • Each league room holds at most 30 players.
 --   • When a room for a given (week, kind) fills up, the next player starts a
---     NEW room of the same kind.
+--     NEW room of the same kind — so e.g. Bronze can run many parallel rooms
+--     of 30.
 --   • Each player is in exactly ONE league per week — enforced by the
 --     primary key (week, player_id).
--- "kind" is the player's skill tier (e.g. "Medical Student"), so players only
--- compete within their own tier.
+-- "kind" is the player's league (Bronze, Silver, …), so players only compete
+-- within their own league.
+--
+-- End-of-week settlement happens client-side from the room this returns: the
+-- top third of the room are promoted, the middle third stay and the bottom
+-- third are demoted, measured against the room's ACTUAL size (a part-full room
+-- still moves only a third). A room needs at least 3 players before anyone
+-- moves. See LeagueZones in the app.
 -- ============================================================================
 
 create table if not exists public.league_members (

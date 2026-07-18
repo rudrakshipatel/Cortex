@@ -1604,7 +1604,7 @@ private struct CaseRewardCover: View {
     private var rankPage: some View {
         let me = board.indices.contains(myIndex) ? board[myIndex] : youEntry
         let below = myIndex + 1 < board.count ? board[myIndex + 1] : nil
-        let mid = Seed.leagueSize - Seed.leaguePromotionCount - Seed.leagueDemotionCount
+        let zones = LeagueZones(size: board.count)
         return VStack(spacing: 16) {
             Spacer(minLength: 8)
             VixClip(anim: .confetti, size: 150, fallback: .cheer).bounceIn()
@@ -1613,15 +1613,17 @@ private struct CaseRewardCover: View {
                 if let below { rankRow(below, highlighted: false) }
             }
             Spacer(minLength: 8)
-            Text(me.rank <= Seed.leaguePromotionCount ? "You're in the promotion zone!" : "Climbing the league")
+            Text(zones.isPromotion(rank: me.rank) ? "You're in the promotion zone!" : "Climbing the league")
                 .font(CX.title(26)).foregroundStyle(CX.navy).multilineTextAlignment(.center)
             Text("Current position #\(me.rank)").font(CX.heading(18)).foregroundStyle(CX.navySoft)
             CXCard {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 10) {
-                            ruleLine("Each league has \(Seed.leagueSize) players. Your rank is based on the XP you earn from cases.")
-                            ruleLine("Every Monday, the top \(Seed.leaguePromotionCount) are promoted, the middle \(mid) stay, and the bottom \(Seed.leagueDemotionCount) are demoted.")
+                            ruleLine("Each league room holds up to \(Seed.leagueSize) players. Your rank is based on the XP you earn from cases.")
+                            ruleLine(zones.movesPlayers
+                                     ? "Every Monday, the top \(zones.promote) are promoted, the middle \(zones.stay) stay, and the bottom \(zones.demote) are demoted."
+                                     : "Every Monday, the top third are promoted, the middle third stay, and the bottom third are demoted — once the room has at least \(Seed.leagueMinPlayers) players.")
                             ruleLine("Weekly Rewards: Top 3 earn \(Seed.leagueTopThreeReward) coins, promotion zone \(Seed.leaguePromotionReward), and safe zone \(Seed.leagueSafeReward).")
                         }
                         VixClip(anim: .tail, size: 76, fallback: .idea)

@@ -1651,7 +1651,7 @@ let onboardingCase = ClinicalCase(
             bullets: ["62-year-old male", "Chief complaint: central chest pain for 2 hours"],
             mentor: "Sudden, exertional, pressure-like chest pain in an older smoker is acute coronary syndrome until proven otherwise.",
             groups: [
-                InfoGroup(system: "Vitals", findings: ["BP 150/90 mmHg", "HR 102 bpm", "RR 18/min", "Temp 37°C (98.6°F)", "SpO₂ 98% on room air"]),
+                InfoGroup(system: "Vitals", findings: ["BP 150/90 mmHg", "HR 102 bpm", "RR 18/min", "Temp 37°C (98.6°F)", "SpO₂ 98% on room air", "BMI 23.5"]),
             ]),
         InfoCard(
             title: "History (Hx)",

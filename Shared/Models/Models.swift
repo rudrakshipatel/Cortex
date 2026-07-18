@@ -346,12 +346,16 @@ final class AppState: ObservableObject {
     // MARK: - League promotion
 
     /// Apply last week's league finish: if the player landed in the promotion
-    /// zone (top 10), promote them one tier (capped at Diamond) and award coins +
-    /// XP scaled by rank and the new league. Returns the reward to celebrate, or
-    /// nil if they didn't promote. Caller passes the player's final rank.
-    func applyLeagueResult(rank: Int) -> LeagueReward? {
+    /// zone (the top third of their room), promote them one tier (capped at
+    /// Diamond) and award coins + XP scaled by rank and the new league. Returns
+    /// the reward to celebrate, or nil if they didn't promote. `groupSize` is
+    /// how many players were in the room — the zones are a third of that, so a
+    /// part-full room still moves only a third (and a room under
+    /// `Seed.leagueMinPlayers` moves nobody).
+    func applyLeagueResult(rank: Int, groupSize: Int) -> LeagueReward? {
         guard rank >= 1 else { return nil }
-        if rank <= Seed.leaguePromotionCount {
+        let zones = LeagueZones(size: groupSize)
+        if zones.isPromotion(rank: rank) {
             // Promotion zone → move up a tier and earn coins (top 3 earn the most).
             let from = league
             if let next = from.next { leagueTier = next.rawValue }   // promote (Diamond stays)
@@ -363,18 +367,19 @@ final class AppState: ObservableObject {
             return reward
         }
         // Safe zone (middle) → stay in the league and earn a small coin reward.
-        if rank <= Seed.leagueSize - Seed.leagueDemotionCount {
+        if rank <= zones.safeThrough {
             coins += Seed.leagueSafeReward
         }
         return nil   // demotion (bottom zone) is handled by applyLeagueDemotion
     }
 
     /// Apply last week's finish when it lands in the demotion zone (the bottom
-    /// `leagueDemotionCount`): drop one tier (Bronze is the floor) and return a
-    /// setback to commiserate. Returns nil if they finished in a safe rank.
-    func applyLeagueDemotion(rank: Int) -> SetbackInfo? {
-        let safeThrough = Seed.leagueSize - Seed.leagueDemotionCount   // ranks 1…20 stay
-        guard rank > safeThrough else { return nil }
+    /// third of the room): drop one tier (Bronze is the floor) and return a
+    /// setback to commiserate. Returns nil if they finished in a safe rank, or
+    /// if the room was too small to move anyone.
+    func applyLeagueDemotion(rank: Int, groupSize: Int) -> SetbackInfo? {
+        let zones = LeagueZones(size: groupSize)
+        guard zones.isDemotion(rank: rank) else { return nil }
         let from = league
         let dropped = from.rawValue > 0
         if dropped { leagueTier = from.rawValue - 1 }                  // demote (Bronze stays)

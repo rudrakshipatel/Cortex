@@ -437,6 +437,10 @@ struct LeaguesView: View {
     /// A leaderboard row for the current player, built from local state — used as
     /// a fallback so the league always shows the user when the server room is
     /// empty or hasn't included them yet.
+    /// How this week's room splits at the reset — a third up, a third down,
+    /// taken from the number of players actually in the room.
+    private var zones: LeagueZones { LeagueZones(size: board.count) }
+
     private func makeSelfEntry(rank: Int) -> LeagueEntry {
         var e = LeagueEntry(name: app.displayName, weeklyXP: app.weeklyXP,
                             totalXP: app.lifetimeXP, trophies: app.gold, isYou: true)
@@ -454,9 +458,11 @@ struct LeaguesView: View {
         let prevWeek = week - 1
         let members = await SupabaseService.shared.fetchLeague(week: prevWeek)
         if let me = members.first(where: { $0.player_id == SupabaseService.shared.userId }) {
-            if let reward = app.applyLeagueResult(rank: me.rank) {
+            // Zones are a third of the room the player actually finished in.
+            let size = members.count
+            if let reward = app.applyLeagueResult(rank: me.rank, groupSize: size) {
                 promotion = reward                              // promoted → celebrate
-            } else if let setback = app.applyLeagueDemotion(rank: me.rank) {
+            } else if let setback = app.applyLeagueDemotion(rank: me.rank, groupSize: size) {
                 app.pendingSetback = setback                    // demoted → commiserate
             }
         }
@@ -547,7 +553,9 @@ struct LeaguesView: View {
                         Image(systemName: app.league.icon).foregroundStyle(tierColor)
                         Text("\(app.league.name) League").font(CX.title(22)).foregroundStyle(CX.navy)
                     }
-                    Text("Top \(Seed.leaguePromotionCount) advance · resets in \(app.leagueDaysLeft) day\(app.leagueDaysLeft == 1 ? "" : "s")")
+                    Text(zones.movesPlayers
+                         ? "Top \(zones.promote) advance · resets in \(app.leagueDaysLeft) day\(app.leagueDaysLeft == 1 ? "" : "s")"
+                         : "Needs \(Seed.leagueMinPlayers) players to promote · resets in \(app.leagueDaysLeft) day\(app.leagueDaysLeft == 1 ? "" : "s")")
                         .font(CX.label(13)).foregroundStyle(CX.navySoft)
                 }
                 .padding(.top, 4)
@@ -560,8 +568,13 @@ struct LeaguesView: View {
                     }.padding(.vertical, 40)
                 } else {
                     ForEach(Array(board.enumerated()), id: \.element.id) { idx, entry in
-                        if idx == Seed.leaguePromotionCount {
-                            zoneDivider("PROMOTION ZONE — top \(Seed.leaguePromotionCount) move up", color: CX.teal)
+                        // Thirds: the line above the safe zone, and the one above
+                        // the drop zone. Hidden in rooms too small to move anyone.
+                        if zones.movesPlayers && idx == zones.promote {
+                            zoneDivider("PROMOTION ZONE — top \(zones.promote) move up", color: CX.teal)
+                        }
+                        if zones.movesPlayers && idx == zones.safeThrough {
+                            zoneDivider("DEMOTION ZONE — bottom \(zones.demote) move down", color: CX.red)
                         }
                         leagueRow(entry)
                     }
@@ -716,8 +729,8 @@ struct LeagueInfoSheet: View {
                     VStack(spacing: 14) {
                         CXCard {
                             VStack(alignment: .leading, spacing: 10) {
-                                infoLine("person.3.fill", "Each league room holds up to \(Seed.leagueSize) real players. Your rank is the XP you earn from cases this week.")
-                                infoLine("arrow.up.circle.fill", "Every week the top \(Seed.leaguePromotionCount) are promoted to the next league: Bronze → Silver → Gold → … → Diamond.")
+                                infoLine("person.3.fill", "Each league room holds up to \(Seed.leagueSize) real players — when one fills, the next players start a fresh room in the same league. Your rank is the XP you earn from cases this week.")
+                                infoLine("arrow.up.circle.fill", "Every week the top third of your room are promoted to the next league (Bronze → Silver → Gold → … → Diamond), the middle third stay, and the bottom third drop a league. A room needs at least \(Seed.leagueMinPlayers) players before anyone moves.")
                                 infoLine("dollarsign.circle.fill", "Promoted players earn coins + XP scaled by their finishing rank and the league they reach — the higher the league, the bigger the reward.")
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }
