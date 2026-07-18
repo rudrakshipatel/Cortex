@@ -6,9 +6,9 @@ struct MainTabView: View {
     @EnvironmentObject var store: ContentStore
     @EnvironmentObject var notif: NotificationManager
     @State private var tab = 0
-    @State private var emergencyCase: ClinicalCase?
-    /// A case opened from a shared "challenge" link.
-    @State private var linkedCase: ClinicalCase?
+    /// The case shown over the tabs — opened by an emergency notification or by
+    /// a shared "challenge" link. Both share one cover: see the note below.
+    @State private var presentedCase: ClinicalCase?
     @State private var linkFailed = false
 
     var body: some View {
@@ -28,11 +28,11 @@ struct MainTabView: View {
         .onChange(of: notif.openEmergencyID) { _, id in
             guard let id else { return }
             if let ec = store.emergency(id: id) {
-                emergencyCase = ec.clinicalCase
+                presentedCase = ec.clinicalCase
                 notif.openEmergencyID = nil
             } else {
                 Task {
-                    emergencyCase = await SupabaseService.shared.fetchEmergencyCase(id: id)
+                    presentedCase = await SupabaseService.shared.fetchEmergencyCase(id: id)
                     notif.openEmergencyID = nil
                 }
             }
@@ -43,26 +43,27 @@ struct MainTabView: View {
         .onChange(of: app.pendingLink) { _, link in
             guard case .caseInvite(let source, let id)? = link else { return }
             if let c = store.clinicalCase(serverId: id) {
-                linkedCase = c
+                presentedCase = c
                 app.pendingLink = nil
             } else {
                 Task {
                     if source == "emergency", let uuid = UUID(uuidString: id) {
-                        linkedCase = await SupabaseService.shared.fetchEmergencyCase(id: uuid)
+                        presentedCase = await SupabaseService.shared.fetchEmergencyCase(id: uuid)
                     } else {
                         await SupabaseService.shared.syncContent(into: store)
-                        linkedCase = store.clinicalCase(serverId: id)
+                        presentedCase = store.clinicalCase(serverId: id)
                     }
-                    if linkedCase == nil { linkFailed = true }
+                    if presentedCase == nil { linkFailed = true }
                     app.pendingLink = nil
                 }
             }
         }
-        .fullScreenCover(item: $emergencyCase) { c in
+        // ONE cover for both entry points. Chaining two `.fullScreenCover`
+        // modifiers on the same view makes SwiftUI honour only one of them, and
+        // the conflict also swallows presentations attempted by the tabs inside
+        // (it stopped Home's "Solve daily case" from opening anything).
+        .fullScreenCover(item: $presentedCase) { c in
             CaseFlow(clinicalCase: c)
-        }
-        .fullScreenCover(item: $linkedCase) { c in
-            CaseFlow(clinicalCase: c, consumesLife: true)
         }
         .alert("Case unavailable", isPresented: $linkFailed) {
             Button("OK") {}
