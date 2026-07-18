@@ -1,19 +1,16 @@
 // Edge Function: "Ask AI about this case" — a doubt-clearing tutor for Pro
 // players. The app sends the finished case's context + the running chat; this
-// function calls OpenAI (ChatGPT) or Google Gemini with the server-side key and
-// returns the assistant's reply. Keys NEVER ship in the app.
+// function calls Google Gemini with the server-side key and returns the
+// assistant's reply. The key NEVER ships in the app.
 //
-// Required secrets (set with `supabase secrets set`):
-//   OPENAI_API_KEY  – your OpenAI key (sk-...)          [needed for provider "openai"]
-//   GEMINI_API_KEY  – your Google AI Studio key         [needed for provider "gemini"]
-// Optional overrides:
-//   OPENAI_MODEL    – default "gpt-4o-mini"
+// Required secret (set with `supabase secrets set`):
+//   GEMINI_API_KEY  – your Google AI Studio key
+// Optional override:
 //   GEMINI_MODEL    – default "gemini-2.0-flash"
 // (SUPABASE_URL and SUPABASE_ANON_KEY are injected automatically.)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.0-flash";
 const MAX_TOKENS = 800;
 
@@ -36,37 +33,18 @@ function systemPrompt(caseContext: string): string {
   ].join("\n");
 }
 
-async function askOpenAI(system: string, history: ChatMessage[]): Promise<string> {
-  const key = Deno.env.get("OPENAI_API_KEY");
-  if (!key) throw new Error("OpenAI is not configured on the server.");
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      temperature: 0.3,
-      max_tokens: MAX_TOKENS,
-      messages: [{ role: "system", content: system }, ...history],
-    }),
-  });
-  if (!res.ok) throw new Error(friendlyError("ChatGPT", res.status, await res.text()));
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() ?? "";
-}
-
 /// Turn a raw provider error into a short, user-facing message (the detail is
 /// logged server-side, never shown in the chat).
 function friendlyError(provider: string, status: number, detail: string): string {
   console.error(`${provider} error`, status, detail);
-  const other = provider === "Gemini" ? "ChatGPT" : "Gemini";
   const d = detail.toLowerCase();
   if (status === 429 || d.includes("resource_exhausted") || d.includes("quota") || d.includes("rate limit")) {
-    return `${provider} has hit its usage limit right now. Please try again in a minute, or switch to ${other}.`;
+    return `The AI tutor has hit its usage limit right now. Please try again in a minute.`;
   }
   if (status === 401 || status === 403) {
-    return `${provider} isn't available right now. Please switch to ${other}.`;
+    return `The AI tutor isn't available right now. Please try again later.`;
   }
-  return `${provider} couldn't answer right now. Please try again, or switch to ${other}.`;
+  return `The AI tutor couldn't answer right now. Please try again.`;
 }
 
 async function askGemini(system: string, history: ChatMessage[]): Promise<string> {
@@ -106,14 +84,13 @@ Deno.serve(async (req) => {
   const { data: userData } = await supabase.auth.getUser(token);
   if (!userData?.user) return json({ error: "Please sign in to use the AI tutor." }, 401);
 
-  let payload: { provider?: string; caseContext?: string; messages?: ChatMessage[] };
+  let payload: { caseContext?: string; messages?: ChatMessage[] };
   try {
     payload = await req.json();
   } catch {
     return json({ error: "Invalid request body." }, 400);
   }
 
-  const provider = (payload.provider ?? "openai").toLowerCase();
   const history = (payload.messages ?? [])
     .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-20); // cap context to the last 20 turns
@@ -122,9 +99,7 @@ Deno.serve(async (req) => {
   const system = systemPrompt(payload.caseContext ?? "(no case details provided)");
 
   try {
-    const reply = provider === "gemini"
-      ? await askGemini(system, history)
-      : await askOpenAI(system, history);
+    const reply = await askGemini(system, history);
     if (!reply) return json({ error: "The AI returned an empty response. Try again." }, 502);
     return json({ reply });
   } catch (e) {

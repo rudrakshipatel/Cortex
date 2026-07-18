@@ -3,22 +3,18 @@ import SwiftUI
 // MARK: - Ask AI about this case (Pro)
 //
 // A follow-up chat the player opens after finishing a case to clear doubts.
-// They pick ChatGPT (OpenAI) or Gemini; every message goes through the `ask-ai`
-// Edge Function, which holds the API keys server-side. The finished case's
-// details are sent as context so answers stay specific to what they just solved.
+// Every message goes through the `ask-ai` Edge Function, which holds the API key
+// server-side. The finished case's details are sent as context so answers stay
+// specific to what they just solved.
 struct CaseDoubtChat: View {
     let clinicalCase: ClinicalCase
     @Environment(\.dismiss) private var dismiss
 
-    enum Provider: String, CaseIterable, Identifiable {
-        case chatgpt, gemini
-        var id: String { rawValue }
-        var label: String { self == .chatgpt ? "ChatGPT" : "Gemini" }
-        var apiValue: String { self == .chatgpt ? "openai" : "gemini" }
-        var icon: String { self == .chatgpt ? "bubble.left.and.text.bubble.right.fill" : "sparkles" }
-    }
+    /// The tutor behind the chat. Sent to the Edge Function, which resolves it
+    /// to the matching provider key.
+    private static let provider = "gemini"
+    private static let providerLabel = "Gemini"
 
-    @State private var provider: Provider = .chatgpt
     @State private var messages: [SupabaseService.AIMessage] = []
     @State private var input = ""
     @State private var sending = false
@@ -29,7 +25,7 @@ struct CaseDoubtChat: View {
         NavigationStack {
             AppBackground {
                 VStack(spacing: 0) {
-                    providerPicker
+                    disclaimer
                     Divider().overlay(CX.hairline)
                     chatScroll
                     inputBar
@@ -47,19 +43,11 @@ struct CaseDoubtChat: View {
 
     // MARK: Pieces
 
-    private var providerPicker: some View {
-        VStack(spacing: 6) {
-            Picker("AI", selection: $provider) {
-                ForEach(Provider.allCases) { p in
-                    Label(p.label, systemImage: p.icon).tag(p)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16).padding(.top, 10)
-            Text("Ask about “\(clinicalCase.displayTitle)”. Educational only — not medical advice.")
-                .font(CX.label(11)).foregroundStyle(CX.navySoft)
-                .multilineTextAlignment(.center).padding(.horizontal, 16).padding(.bottom, 6)
-        }
+    private var disclaimer: some View {
+        Text("Ask about “\(clinicalCase.displayTitle)”. Educational only — not medical advice.")
+            .font(CX.label(11)).foregroundStyle(CX.navySoft)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8)
     }
 
     private var chatScroll: some View {
@@ -131,7 +119,7 @@ struct CaseDoubtChat: View {
         HStack {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small).tint(CX.teal)
-                Text("\(provider.label) is thinking…").font(CX.label(13)).foregroundStyle(CX.navySoft)
+                Text("\(Self.providerLabel) is thinking…").font(CX.label(13)).foregroundStyle(CX.navySoft)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -175,7 +163,7 @@ struct CaseDoubtChat: View {
             defer { sending = false }
             do {
                 let reply = try await SupabaseService.shared.askAI(
-                    provider: provider.apiValue, caseContext: context, messages: history)
+                    provider: Self.provider, caseContext: context, messages: history)
                 messages.append(.init(role: "assistant", content: reply))
             } catch {
                 self.error = (error as? LocalizedError)?.errorDescription ?? "Something went wrong. Try again."

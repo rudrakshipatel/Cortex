@@ -720,13 +720,13 @@ final class SupabaseService: ObservableObject {
     /// One chat turn sent to / from the AI tutor. `role` is "user" or "assistant".
     struct AIMessage: Codable { let role: String; let content: String }
     private struct AIRequest: Encodable {
-        let provider: String       // "openai" (ChatGPT) or "gemini"
+        let provider: String       // "gemini"
         let caseContext: String
         let messages: [AIMessage]
     }
 
     /// Ask the case tutor a follow-up question through the `ask-ai` Edge Function
-    /// (which holds the OpenAI / Gemini keys server-side). Returns the reply text.
+    /// (which holds the provider key server-side). Returns the reply text.
     func askAI(provider: String, caseContext: String, messages: [AIMessage]) async throws -> String {
         guard isConfigured else { throw SBError.notConfigured }
         guard isSignedIn else { throw SBError.notSignedIn }
