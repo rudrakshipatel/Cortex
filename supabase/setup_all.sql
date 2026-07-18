@@ -310,8 +310,10 @@ create index if not exists case_attempts_user_time_idx
 --     options it picked; the server reads the true answers from storage, scores
 --     the attempt (same formula as the app), and returns the score plus the full
 --     case so the outcome screen can reveal the answer AFTER the attempt.
---       diagnosis 60% · helpful tests 20% · appropriate treatments 20%,
---       with a 0.25 penalty per wasteful test/treatment.
+--       Dynamic Pro-Rata Valuation: diagnosis 30; the remaining 70 split evenly
+--       across every correct investigation + treatment (value vc each). A wrong
+--       pick costs vc; an un-picked correct item costs 0.25·vc; each category is
+--       floored at 0. Rounded half-up and clamped to 0…100.
 --
 --     Grading REQUIRES an authenticated player (so anonymous scripts can't
 --     scrape answers one case at a time) and is rate-limited per user, which
@@ -336,11 +338,13 @@ declare
   tests       jsonb;
   treatments  jsonb;
   dx_ok       boolean := false;
-  h_total int; h_good int; h_bad int;
-  a_total int; a_good int; a_bad int;
-  tests_score numeric := 0;
+  h_total int; h_good int; h_bad int;   -- correct investigations, picked-right, picked-wrong
+  a_total int; a_good int; a_bad int;   -- correct treatments,    picked-right, picked-wrong
+  vc          numeric := 0;             -- value of one correct item (70 / #correct items)
+  dx_score    numeric := 0;
+  inv_score   numeric := 0;
   tx_score    numeric := 0;
-  score       numeric := 0;
+  raw_total   numeric := 0;
   xp_reward   int;
 begin
   -- Must be a signed-in player.
@@ -400,9 +404,6 @@ begin
                where i >= 0 and i < jsonb_array_length(tests)
                  and not coalesce((tests->i->>'helpful')::boolean, false));
   end if;
-  if h_total > 0 then
-    tests_score := greatest(0, h_good::numeric / h_total - 0.25 * h_bad) * 0.20;
-  end if;
 
   -- Treatments — up to 20%.
   a_total := (select count(*) from jsonb_array_elements(treatments) t
@@ -422,11 +423,19 @@ begin
                where i >= 0 and i < jsonb_array_length(treatments)
                  and not coalesce((treatments->i->>'appropriate')::boolean, false));
   end if;
-  if a_total > 0 then
-    tx_score := greatest(0, a_good::numeric / a_total - 0.25 * a_bad) * 0.20;
-  end if;
 
-  score := least(1.0, (case when dx_ok then 0.60 else 0 end) + tests_score + tx_score);
+  -- Dynamic Pro-Rata Valuation: diagnosis is a flat 30; the other 70 is split
+  -- evenly across every correct investigation + treatment. Each correct pick
+  -- earns vc, each wrong pick costs vc, each un-picked correct item costs
+  -- 0.25·vc. Each category is floored at 0 before summing. Mirrors the app's
+  -- CaseSession scoring exactly.
+  if (h_total + a_total) > 0 then
+    vc := 70.0 / (h_total + a_total);
+  end if;
+  dx_score  := case when dx_ok then 30 else 0 end;
+  inv_score := greatest(0, h_good * vc - h_bad * vc - 0.25 * vc * (h_total - h_good));
+  tx_score  := greatest(0, a_good * vc - a_bad * vc - 0.25 * vc * (a_total - a_good));
+  raw_total := least(100, greatest(0, dx_score + inv_score + tx_score));
 
   -- Record the attempt (drives the rate limit + abuse detection).
   insert into public.case_attempts (user_id, source, case_id)
@@ -435,9 +444,9 @@ begin
     set attempts = public.case_attempts.attempts + 1, last_at = now();
 
   return jsonb_build_object(
-    'score',        score,
-    'earned_xp',    round(score * 100),
-    'earned_coins', round(score * xp_reward),
+    'score',        raw_total / 100.0,
+    'earned_xp',    round(raw_total),
+    'earned_coins', round(raw_total / 100.0 * xp_reward),
     'case',         pay     -- full payload (answers) — revealed only post-attempt
   );
 end;

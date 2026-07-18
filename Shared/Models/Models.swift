@@ -1022,43 +1022,62 @@ final class CaseSession: ObservableObject {
 
     var diagnosisCorrect: Bool { pickedDiagnosis?.correct ?? false }
 
-    /// Workup quality for this attempt, 0...1. A perfect solve (1.0) needs the
-    /// correct diagnosis (60%), every helpful test ordered (20%) and every
-    /// appropriate treatment chosen (20%), with no wasteful picks. Ordering
-    /// unhelpful tests or inappropriate treatments reduces the score — so
-    /// skipping the trays or guessing earns little or nothing.
-    var performance: Double {
-        // Diagnosis — 60%.
-        let dx = diagnosisCorrect ? 0.60 : 0.0
+    // MARK: Scoring — Dynamic Pro-Rata Valuation
+    //
+    // Out of 100: the diagnosis is worth a flat 30, and the remaining 70 is
+    // split pro-rata across every correct investigation and treatment the case
+    // defines. Each correct pick earns that per-item value (VC); each wrong pick
+    // costs a full VC; each recommended item left un-picked costs 0.25·VC.
+    // Investigations and treatments are each floored at 0 before summing, so a
+    // wasteful tray never drags the total negative. Must stay in lock-step with
+    // the server's grade_case() in supabase/setup_all.sql.
 
-        // Tests — up to 20%: credit for helpful tests ordered, debit for noise.
-        let helpfulCount = clinicalCase.tests.filter(\.helpful).count
-        var tests = 0.0
-        if helpfulCount > 0 {
-            let good = Double(tray.filter(\.helpful).count) / Double(helpfulCount)
-            let bad  = Double(tray.filter { !$0.helpful }.count)
-            tests = Swift.max(0, good - 0.25 * bad) * 0.20
-        }
-
-        // Treatments — up to 20%: credit for appropriate, debit for inappropriate.
-        let appropriateCount = clinicalCase.treatments.filter(\.appropriate).count
-        var tx = 0.0
-        if appropriateCount > 0 {
-            let good = Double(treatmentTray.filter(\.appropriate).count) / Double(appropriateCount)
-            let bad  = Double(treatmentTray.filter { !$0.appropriate }.count)
-            tx = Swift.max(0, good - 0.25 * bad) * 0.20
-        }
-
-        return Swift.min(1.0, dx + tests + tx)
+    /// Correct investigations (helpful tests) + correct treatments — the
+    /// pro-rata denominator.
+    private var correctItemCount: Int {
+        clinicalCase.tests.filter(\.helpful).count + clinicalCase.treatments.filter(\.appropriate).count
+    }
+    /// Value of one correct clinical decision: the 70-point pool split evenly.
+    private var itemValue: Double {
+        let n = correctItemCount
+        return n > 0 ? 70.0 / Double(n) : 0
     }
 
-    /// XP for this attempt — out of a fixed 100. The full 100 is awarded only
-    /// for a completely correct solve (perfect workup quality).
+    /// Diagnosis — a flat 30, all-or-nothing.
+    var diagnosisScore: Double { diagnosisCorrect ? 30.0 : 0.0 }
+
+    /// Investigations — floored at 0.
+    var investigationScore: Double {
+        let vc = itemValue
+        var raw = 0.0
+        for t in tray { raw += t.helpful ? vc : -vc }
+        let picked = Set(tray.map(\.id))
+        for t in clinicalCase.tests where t.helpful && !picked.contains(t.id) { raw -= 0.25 * vc }
+        return Swift.max(0, raw)
+    }
+
+    /// Treatments — floored at 0.
+    var treatmentScore: Double {
+        let vc = itemValue
+        var raw = 0.0
+        for t in treatmentTray { raw += t.appropriate ? vc : -vc }
+        let picked = Set(treatmentTray.map(\.id))
+        for t in clinicalCase.treatments where t.appropriate && !picked.contains(t.id) { raw -= 0.25 * vc }
+        return Swift.max(0, raw)
+    }
+
+    /// Raw final score, 0...100 (each category floored, then summed).
+    var rawScore: Double { diagnosisScore + investigationScore + treatmentScore }
+
+    /// Workup quality for this attempt, 0...1 — drives the coin reward.
+    var performance: Double { Swift.min(1.0, Swift.max(0.0, rawScore / 100.0)) }
+
+    /// XP for this attempt — out of a fixed 100. Round half-up, then clamp.
     static let maxXP = 100
     /// Minimum XP for an attempt to count the case as "solved" (and stop it
     /// reappearing). Below this it stays unsolved.
     static let solvedXP = 25
-    var earnedXP: Int { serverXP ?? Int((performance * Double(Self.maxXP)).rounded()) }
+    var earnedXP: Int { serverXP ?? Swift.min(100, Swift.max(0, Int(rawScore.rounded()))) }
 
     /// Whether this attempt solves the case — scored at least `solvedXP`.
     var solved: Bool { earnedXP >= Self.solvedXP }
