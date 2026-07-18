@@ -829,7 +829,7 @@ struct MeView: View {
                         coinsCard
 
                         settingsList
-                        Text("Cortex • v1.0").font(CX.label(12)).foregroundStyle(CX.navySoft)
+                        Text(CX.versionLabel).font(CX.label(12)).foregroundStyle(CX.navySoft)
                     }
                     .padding(.horizontal, 18).padding(.bottom, 24)
                 }

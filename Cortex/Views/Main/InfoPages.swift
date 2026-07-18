@@ -31,7 +31,7 @@ private struct InfoPage<Content: View>: View {
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 16) {
                         content
-                        Text("Cortex • v1.0")
+                        Text(CX.versionLabel)
                             .font(CX.label(12)).foregroundStyle(CX.navySoft)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.top, 8)

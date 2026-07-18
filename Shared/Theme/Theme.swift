@@ -10,6 +10,13 @@ enum CX {
     /// Player feedback survey (Google Form), opened from the Me tab.
     static let feedbackURL = URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSc7iu98VDG4CHxWW9Q3AuNn8h2oYjuULdNTEkPoPl4nrqSfYg/viewform")!
 
+    /// "Cortex • v1.0.4" — read from the bundle so it tracks MARKETING_VERSION
+    /// instead of drifting out of date in two hand-edited strings.
+    static var versionLabel: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        return "Cortex • v\(v ?? "1.0")"
+    }
+
     // MARK: Core palette
     static let teal       = Color(hex: 0x16C2B0)   // brand / category
     static let tealDark   = Color(hex: 0x0FA899)
