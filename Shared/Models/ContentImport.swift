@@ -3,9 +3,11 @@ import Foundation
 // MARK: - Bulk-import JSON format
 //
 // A single JSON object may contain "clinical", "daily" and/or "emergencies"
-// arrays. The case body ("case") is the same CaseDTO format everywhere; daily
-// entries add a "date" and emergencies add a "sendAt" date-time. IDs are
-// generated automatically; optional fields fall back to sensible defaults.
+// arrays. The case body is the same CaseDTO format everywhere. Clinical and
+// daily entries are written the same way — the case's fields at the top level —
+// with daily adding a "date". Emergencies still wrap the case under "case" and
+// add a "sendAt" date-time. IDs are generated automatically; optional fields
+// fall back to sensible defaults.
 
 struct ImportPayload: Codable {
     var clinical: [CaseDTO]?
@@ -14,13 +16,43 @@ struct ImportPayload: Codable {
 }
 
 /// A daily case + the calendar day it should appear on.
+///
+/// Authored exactly like a clinical case — the case's own fields sit at the top
+/// level — with `date` alongside them:
+///
+///     { "date": "2026-06-22", "specialty": "Cardiology", "patientName": "Rosa", … }
+///
+/// The older nested form (`{ "date": …, "case": { … } }`) is still read, so
+/// files written before this change and rows already published keep working.
+/// New writes always use the flat form.
 struct DailyDTO: Codable {
     var date: String?            // "2026-06-22" (GMT day); defaults to today
     var clinicalCase: CaseDTO
 
     private enum CodingKeys: String, CodingKey {
         case date
-        case clinicalCase = "case"   // JSON key is "case"
+        case clinicalCase = "case"   // legacy nested form only
+    }
+
+    init(date: String?, clinicalCase: CaseDTO) {
+        self.date = date
+        self.clinicalCase = clinicalCase
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        if let nested = try c.decodeIfPresent(CaseDTO.self, forKey: .clinicalCase) {
+            clinicalCase = nested                      // legacy { date, case: {…} }
+        } else {
+            clinicalCase = try CaseDTO(from: decoder)  // flat, same as clinical
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try clinicalCase.encode(to: encoder)           // case fields at the top level
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(date, forKey: .date)
     }
 
     func toModel(_ label: String, requireKey: Bool = true) throws -> DailyCase {

@@ -210,50 +210,48 @@ enum JSONTemplates {
     }
     """
 
-    // Daily and Emergency reuse the same case body ("case") as clinical, plus a
-    // schedule field: daily has "date" (the day it appears), emergency has
-    // "sendAt" (when it goes live; stays for 3 hours).
+    // Daily is written exactly like a clinical case — the case's own fields at
+    // the top level — plus "date", the day it appears. Emergency still wraps the
+    // case under "case" and adds "sendAt" (when it goes live; stays 3 hours).
     static let daily = """
     {
       "daily": [
         {
           "date": "2026-06-22",
-          "case": {
-            "specialty": "Cardiology",
-            "patientName": "Rosa",
-            "gender": "Female",
-            "age": "62 Y",
-            "chiefComplaint": "Crushing chest pain radiating to the left arm",
-            "presentation": { "bullets": ["62F, sudden crushing chest pain", "Radiates to left arm"],
-              "mentor": "Classic anginal description." },
-            "history": { "bullets": ["Pain for 40 min", "Sweating, nausea"],
-              "mentor": "Autonomic features suggest ischaemia." },
-            "examination": { "bullets": ["Diaphoretic", "BP 100/70, HR 90"],
-              "mentor": "Check for haemodynamic compromise." },
-            "tests": [
-              { "category": "Cardiac", "name": "ECG", "result": "ST elevation in II, III, aVF",
-                "helpful": true, "mentor": "Inferior STEMI." }
-            ],
-            "diagnosisQuestion": "Best diagnosis?",
-            "diagnoses": [
-              { "name": "Inferior STEMI", "correct": true },
-              { "name": "Pericarditis", "correct": false }
-            ],
-            "treatments": [
-              { "category": "Reperfusion", "name": "Primary PCI", "appropriate": true }
-            ],
-            "outcomeTitle": "Sharp call!",
-            "outcomeBody": "ST elevation in the inferior leads is a STEMI needing urgent PCI.",
-            "xpReward": 25,
-            "mentorInsight": {
-              "reasoning": "Core clinical insights — how the diagnosis was reached.",
-              "differentials": "Why the other diagnoses didn't fit.",
-              "testRationale": "Why these tests were the right ones to order.",
-              "treatmentSequencing": "Treatment priorities and the order to start them.",
-              "pearls": [
-                { "title": "Pearl title (the button)", "body": "The note it opens." }
-              ]
-            }
+          "specialty": "Cardiology",
+          "patientName": "Rosa",
+          "gender": "Female",
+          "age": "62 Y",
+          "chiefComplaint": "Crushing chest pain radiating to the left arm",
+          "presentation": { "bullets": ["62F, sudden crushing chest pain", "Radiates to left arm"],
+            "mentor": "Classic anginal description." },
+          "history": { "bullets": ["Pain for 40 min", "Sweating, nausea"],
+            "mentor": "Autonomic features suggest ischaemia." },
+          "examination": { "bullets": ["Diaphoretic", "BP 100/70, HR 90"],
+            "mentor": "Check for haemodynamic compromise." },
+          "tests": [
+            { "category": "Cardiac", "name": "ECG", "result": "ST elevation in II, III, aVF",
+              "helpful": true, "mentor": "Inferior STEMI." }
+          ],
+          "diagnosisQuestion": "Best diagnosis?",
+          "diagnoses": [
+            { "name": "Inferior STEMI", "correct": true },
+            { "name": "Pericarditis", "correct": false }
+          ],
+          "treatments": [
+            { "category": "Reperfusion", "name": "Primary PCI", "appropriate": true }
+          ],
+          "outcomeTitle": "Sharp call!",
+          "outcomeBody": "ST elevation in the inferior leads is a STEMI needing urgent PCI.",
+          "xpReward": 25,
+          "mentorInsight": {
+            "reasoning": "Core clinical insights — how the diagnosis was reached.",
+            "differentials": "Why the other diagnoses didn't fit.",
+            "testRationale": "Why these tests were the right ones to order.",
+            "treatmentSequencing": "Treatment priorities and the order to start them.",
+            "pearls": [
+              { "title": "Pearl title (the button)", "body": "The note it opens." }
+            ]
           }
         }
       ]
