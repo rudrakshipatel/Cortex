@@ -1032,35 +1032,47 @@ final class CaseSession: ObservableObject {
 
     // MARK: Scoring — Dynamic Pro-Rata Valuation
     //
-    // Out of 100: the diagnosis is worth a flat 30, and the remaining 70 is
+    // Out of 100: the diagnosis is worth a flat 35, and the remaining 65 is
     // split pro-rata across every correct investigation and treatment the case
-    // defines. Each correct pick earns that per-item value (VC); each wrong pick
-    // costs a full VC; each recommended item left un-picked costs 0.25·VC.
+    // defines. Each correct pick earns that per-item value (VC); a wrong pick
+    // costs half a VC; each recommended item left un-picked costs 0.25·VC.
     // Investigations and treatments are each floored at 0 before summing, so a
     // wasteful tray never drags the total negative. Must stay in lock-step with
     // the server's grade_case() in supabase/setup_all.sql.
+
+    /// Flat award for naming the right diagnosis.
+    nonisolated static let diagnosisPoints = 35.0
+    /// Split pro-rata across the case's correct investigations + treatments.
+    /// `diagnosisPoints + itemPool` is the 100-point maximum.
+    nonisolated static let itemPool = 65.0
+    /// A wrong pick costs this fraction of one correct pick's value.
+    nonisolated static let wrongPickPenalty = 0.5
+    /// A recommended item left un-picked costs this fraction.
+    nonisolated static let omissionPenalty = 0.25
 
     /// Correct investigations (helpful tests) + correct treatments — the
     /// pro-rata denominator.
     private var correctItemCount: Int {
         clinicalCase.tests.filter(\.helpful).count + clinicalCase.treatments.filter(\.appropriate).count
     }
-    /// Value of one correct clinical decision: the 70-point pool split evenly.
+    /// Value of one correct clinical decision: the item pool split evenly.
     private var itemValue: Double {
         let n = correctItemCount
-        return n > 0 ? 70.0 / Double(n) : 0
+        return n > 0 ? Self.itemPool / Double(n) : 0
     }
 
-    /// Diagnosis — a flat 30, all-or-nothing.
-    var diagnosisScore: Double { diagnosisCorrect ? 30.0 : 0.0 }
+    /// Diagnosis — flat and all-or-nothing.
+    var diagnosisScore: Double { diagnosisCorrect ? Self.diagnosisPoints : 0.0 }
 
     /// Investigations — floored at 0.
     var investigationScore: Double {
         let vc = itemValue
         var raw = 0.0
-        for t in tray { raw += t.helpful ? vc : -vc }
+        for t in tray { raw += t.helpful ? vc : -Self.wrongPickPenalty * vc }
         let picked = Set(tray.map(\.id))
-        for t in clinicalCase.tests where t.helpful && !picked.contains(t.id) { raw -= 0.25 * vc }
+        for t in clinicalCase.tests where t.helpful && !picked.contains(t.id) {
+            raw -= Self.omissionPenalty * vc
+        }
         return Swift.max(0, raw)
     }
 
@@ -1068,9 +1080,11 @@ final class CaseSession: ObservableObject {
     var treatmentScore: Double {
         let vc = itemValue
         var raw = 0.0
-        for t in treatmentTray { raw += t.appropriate ? vc : -vc }
+        for t in treatmentTray { raw += t.appropriate ? vc : -Self.wrongPickPenalty * vc }
         let picked = Set(treatmentTray.map(\.id))
-        for t in clinicalCase.treatments where t.appropriate && !picked.contains(t.id) { raw -= 0.25 * vc }
+        for t in clinicalCase.treatments where t.appropriate && !picked.contains(t.id) {
+            raw -= Self.omissionPenalty * vc
+        }
         return Swift.max(0, raw)
     }
 

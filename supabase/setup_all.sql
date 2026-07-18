@@ -310,10 +310,10 @@ create index if not exists case_attempts_user_time_idx
 --     options it picked; the server reads the true answers from storage, scores
 --     the attempt (same formula as the app), and returns the score plus the full
 --     case so the outcome screen can reveal the answer AFTER the attempt.
---       Dynamic Pro-Rata Valuation: diagnosis 30; the remaining 70 split evenly
+--       Dynamic Pro-Rata Valuation: diagnosis 35; the remaining 65 split evenly
 --       across every correct investigation + treatment (value vc each). A wrong
---       pick costs vc; an un-picked correct item costs 0.25·vc; each category is
---       floored at 0. Rounded half-up and clamped to 0…100.
+--       pick costs 0.5·vc; an un-picked correct item costs 0.25·vc; each category
+--       is floored at 0. Rounded half-up and clamped to 0…100.
 --
 --     Grading REQUIRES an authenticated player (so anonymous scripts can't
 --     scrape answers one case at a time) and is rate-limited per user, which
@@ -424,17 +424,17 @@ begin
                  and not coalesce((treatments->i->>'appropriate')::boolean, false));
   end if;
 
-  -- Dynamic Pro-Rata Valuation: diagnosis is a flat 30; the other 70 is split
+  -- Dynamic Pro-Rata Valuation: diagnosis is a flat 35; the other 65 is split
   -- evenly across every correct investigation + treatment. Each correct pick
-  -- earns vc, each wrong pick costs vc, each un-picked correct item costs
+  -- earns vc, a wrong pick costs 0.5·vc, each un-picked correct item costs
   -- 0.25·vc. Each category is floored at 0 before summing. Mirrors the app's
   -- CaseSession scoring exactly.
   if (h_total + a_total) > 0 then
-    vc := 70.0 / (h_total + a_total);
+    vc := 65.0 / (h_total + a_total);
   end if;
-  dx_score  := case when dx_ok then 30 else 0 end;
-  inv_score := greatest(0, h_good * vc - h_bad * vc - 0.25 * vc * (h_total - h_good));
-  tx_score  := greatest(0, a_good * vc - a_bad * vc - 0.25 * vc * (a_total - a_good));
+  dx_score  := case when dx_ok then 35 else 0 end;
+  inv_score := greatest(0, h_good * vc - 0.5 * vc * h_bad - 0.25 * vc * (h_total - h_good));
+  tx_score  := greatest(0, a_good * vc - 0.5 * vc * a_bad - 0.25 * vc * (a_total - a_good));
   raw_total := least(100, greatest(0, dx_score + inv_score + tx_score));
 
   -- Record the attempt (drives the rate limit + abuse detection).
