@@ -943,6 +943,7 @@ struct MeView: View {
             settingsRow("lock.shield.fill", "Privacy Policy") { openURL(CX.privacyURL) }
             settingsRow("questionmark.circle.fill", "FAQs") { infoPage = .faqs }
             settingsRow("envelope.fill", "Facing a Problem? Contact Us") { infoPage = .support }
+            settingsRow("star.bubble.fill", "Give Feedback", tint: CX.teal) { openURL(CX.feedbackURL) }
             if SupabaseService.shared.isSignedIn {
                 settingsRow("rectangle.portrait.and.arrow.right.fill", "Logout", tint: CX.orange, last: false) { confirmLogout = true }
                 settingsRow("trash.fill", "Delete Account", tint: .red, last: true) { confirmDelete = true }

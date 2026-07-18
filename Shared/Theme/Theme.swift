@@ -7,6 +7,8 @@ enum CX {
     // MARK: Legal links (open the hosted pages)
     static let termsURL   = URL(string: "https://www.cortexcases.com/terms")!
     static let privacyURL = URL(string: "https://www.cortexcases.com/privacy")!
+    /// Player feedback survey (Google Form), opened from the Me tab.
+    static let feedbackURL = URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSc7iu98VDG4CHxWW9Q3AuNn8h2oYjuULdNTEkPoPl4nrqSfYg/viewform")!
 
     // MARK: Core palette
     static let teal       = Color(hex: 0x16C2B0)   // brand / category
