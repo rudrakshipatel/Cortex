@@ -4,5 +4,13 @@
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Universal Links: lets iOS hand cortexcases.com/case/… straight to the
+	     app when it's installed. Requires the apple-app-site-association file
+	     served from the site (see web/apple-app-site-association). -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:cortexcases.com</string>
+		<string>applinks:www.cortexcases.com</string>
+	</array>
 </dict>
 </plist>

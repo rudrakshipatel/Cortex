@@ -52,6 +52,17 @@ final class ContentStore: ObservableObject {
         dailyCases.first { $0.dayKey == day }?.clinicalCase
     }
 
+    /// Find a case by its **server** id — the id a shared link carries. Searches
+    /// everything already downloaded (clinical, daily and emergency); returns nil
+    /// if this device hasn't got that case yet, so the caller can fetch it.
+    func clinicalCase(serverId id: String) -> ClinicalCase? {
+        let wanted = id.lowercased()
+        func matches(_ c: ClinicalCase) -> Bool { c.remote?.id.lowercased() == wanted }
+        if let c = clinicalCases.first(where: matches) { return c }
+        if let c = dailyCases.map(\.clinicalCase).first(where: matches) { return c }
+        return emergencies.map(\.clinicalCase).first(where: matches)
+    }
+
     private let fileURL: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appendingPathComponent("cortex_content.json")

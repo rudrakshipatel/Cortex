@@ -71,6 +71,9 @@ final class AppState: ObservableObject {
     /// A pending "setback" (lost streak / league demotion) to commiserate with
     /// the player. Transient — surfaced once as a sheet, then cleared. Not saved.
     @Published var pendingSetback: SetbackInfo? = nil
+    /// A case link the player tapped outside the app (a friend's challenge).
+    /// Transient — the main tab view opens it, then clears it. Not saved.
+    @Published var pendingLink: CortexLink? = nil
     /// The GMT day Life was last refilled — drives the daily reset.
     @Published private(set) var lastLifeDay: Int { didSet { defaults.set(lastLifeDay, forKey: K.lifeDay) } }
     /// Timestamp from which energy has been regenerating.

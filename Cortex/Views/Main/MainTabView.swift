@@ -7,6 +7,9 @@ struct MainTabView: View {
     @EnvironmentObject var notif: NotificationManager
     @State private var tab = 0
     @State private var emergencyCase: ClinicalCase?
+    /// A case opened from a shared "challenge" link.
+    @State private var linkedCase: ClinicalCase?
+    @State private var linkFailed = false
 
     var body: some View {
         TabView(selection: $tab) {
@@ -34,8 +37,37 @@ struct MainTabView: View {
                 }
             }
         }
+        // A case link a friend shared. Open it from what's already downloaded;
+        // if this device hasn't got that case yet, pull the content feed once
+        // and try again (a brand-new install lands here before its first sync).
+        .onChange(of: app.pendingLink) { _, link in
+            guard case .caseInvite(let source, let id)? = link else { return }
+            if let c = store.clinicalCase(serverId: id) {
+                linkedCase = c
+                app.pendingLink = nil
+            } else {
+                Task {
+                    if source == "emergency", let uuid = UUID(uuidString: id) {
+                        linkedCase = await SupabaseService.shared.fetchEmergencyCase(id: uuid)
+                    } else {
+                        await SupabaseService.shared.syncContent(into: store)
+                        linkedCase = store.clinicalCase(serverId: id)
+                    }
+                    if linkedCase == nil { linkFailed = true }
+                    app.pendingLink = nil
+                }
+            }
+        }
         .fullScreenCover(item: $emergencyCase) { c in
             CaseFlow(clinicalCase: c)
+        }
+        .fullScreenCover(item: $linkedCase) { c in
+            CaseFlow(clinicalCase: c, consumesLife: true)
+        }
+        .alert("Case unavailable", isPresented: $linkFailed) {
+            Button("OK") {}
+        } message: {
+            Text("That case isn't available on your account yet. Pull down to refresh, or try again once it's published.")
         }
         // Commiserate after a setback (lost streak / league demotion). Shown once;
         // queued behind any case cover so it appears when the player is back here.

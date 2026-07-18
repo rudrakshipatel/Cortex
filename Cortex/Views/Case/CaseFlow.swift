@@ -897,6 +897,13 @@ private struct OutcomeStep: View {
         return "I just \(correct ? "solved" : "tackled") a clinical case on Cortex — “\(c.displayTitle)” (\(c.specialty)). Same patient, same clues, same pressure. Think you can beat my score? 🦊🩺"
     }
 
+    /// Where "Challenge Friends" points. A server case gets a link straight to
+    /// itself; a built-in case has nothing the recipient could open, so it falls
+    /// back to the App Store listing.
+    private var challengeLink: URL {
+        CortexLink.shareURL(for: session.clinicalCase) ?? CortexLink.appStoreURL
+    }
+
     var body: some View {
         // Server cases are scored remotely; wait for the result before revealing
         // anything (otherwise the answer/score would flash as a wrong "0").
@@ -1086,8 +1093,9 @@ private struct OutcomeStep: View {
                     .buttonStyle(PressStyle())
                 }
 
-                // Share + continue
-                ShareLink(item: challengeText) {
+                // Share + continue. The link opens this exact case for anyone who
+                // already has Cortex, and the App Store for anyone who doesn't.
+                ShareLink(item: challengeLink, message: Text(challengeText)) {
                     Text("Challenge Friends").font(CX.heading(16)).foregroundStyle(CX.orange)
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(CX.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))

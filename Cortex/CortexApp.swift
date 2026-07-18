@@ -37,6 +37,17 @@ struct CortexApp: App {
                         Task { await app.pushProfileNow() }
                     }
                 }
+                // A friend's challenge link. Universal Links arrive as a browsing
+                // user activity when the app is already running, and as a plain
+                // URL open on a cold launch — handle both.
+                .onOpenURL { url in
+                    if let link = CortexLink.parse(url) { app.pendingLink = link }
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL, let link = CortexLink.parse(url) {
+                        app.pendingLink = link
+                    }
+                }
                 // Mirror the real StoreKit subscription entitlement into AppState.
                 .onChange(of: storeManager.isPro) { _, pro in app.isPro = pro }
                 .task(id: storeManager.isPro) { app.isPro = storeManager.isPro }

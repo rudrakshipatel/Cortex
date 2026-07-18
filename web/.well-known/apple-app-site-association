@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["V45665P4Z5.com.docriddles.cortex"],
+        "components": [
+          { "/": "/case/*", "comment": "Shared case links open in the Cortex app" }
+        ]
+      }
+    ]
+  }
+}
